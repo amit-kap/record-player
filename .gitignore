@@ -6,3 +6,5 @@ xcuserdata/
 *.xcuserstate
 .swiftpm/
 docs/renders/
+__pycache__/
+*.pyc
