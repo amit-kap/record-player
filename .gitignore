@@ -1,1 +1,8 @@
 .DS_Store
+build/
+DerivedData/
+.build/
+xcuserdata/
+*.xcuserstate
+.swiftpm/
+docs/renders/
