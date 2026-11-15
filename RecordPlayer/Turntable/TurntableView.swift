@@ -24,6 +24,7 @@ struct TurntableView: View {
                     return
                 }
                 content.camera = .virtual
+                content.renderingEffects.antialiasing = .multisample4X
                 if #available(macOS 26.0, *) {
                     content.renderingEffects.customPostProcessing = .effect(DepthOfFieldEffect(focus: focus))
                 }

@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-OUT=build/dev
+OUT=${OUT:-build/dev}
 APP=$OUT/RecordPlayer.app
 TARGET=arm64-apple-macos15.0
 mkdir -p "$APP/Contents/MacOS"

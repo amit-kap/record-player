@@ -120,14 +120,9 @@ final class LocalPlayback: NSObject, RecordPlayback {
             space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
         let hue = CoverColor.hue(for: title)
-        let top = CGColor(colorSpace: space, components: hsb(hue, 0.55, 0.85) + [1])!
-        let bottom = CGColor(colorSpace: space, components: hsb(hue, 0.75, 0.35) + [1])!
         let side = CGFloat(pixels)
-        if let gradient = CGGradient(colorsSpace: space, colors: [top, bottom] as CFArray, locations: [0, 1]) {
-            context.drawLinearGradient(
-                gradient, start: CGPoint(x: 0, y: side), end: CGPoint(x: 0, y: 0), options: []
-            )
-        }
+        context.setFillColor(CGColor(colorSpace: space, components: hsb(hue, 0.62, 0.62) + [1])!)
+        context.fill(CGRect(x: 0, y: 0, width: side, height: side))
         let font = CTFontCreateWithName("HelveticaNeue-Bold" as CFString, side * 0.08, nil)
         var alignment = CTTextAlignment.center
         let centred = withUnsafeBytes(of: &alignment) { bytes in

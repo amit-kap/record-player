@@ -49,6 +49,27 @@ Total: 27 working days. Milestones 4 and 5 were added on 2026-11-13, when Amit m
 ## Status
 Current milestone: M5, built, waiting for Amit's hands-on check (2026-11-15). M4 is built and also waits for his hands-on check (2026-11-13). M3 was tried by Amit and adjusted (stop returns the arm home, calmer strobe dots). M1 is not started and is blocked on the Apple Developer membership.
 
+Lighting rework (2026-11-15, after Amit's review; Sonnet agents did the research and the textures, the supervising session did the scene; not committed):
+- The deck is lit like a studio product shot: an HDR studio of soft panels drawn in code (a softbox behind, a warm strip on the key side, a cool strip behind), one warm key lamp for the shadows, and a cool rim lamp from behind. All of it is data in `TurntableTheme`.
+- Soft shadow edges: RealityKit has no area lights before macOS 27, so the key is five spots spread over the lamp's face.
+- The streak on the record is real now: the vinyl is a grooved (anisotropic) material, so the lamps and panels make the streak and it moves with the camera. The painted streak overlay is gone.
+- The label is plain lit paper: the unlit glow copy is gone, so it takes light and shadow like the rest. The test covers are one flat colour; their old gradient looked like a shadow turning with the record.
+- A soft dark patch on the floor under the deck, and 4x antialiasing.
+- Strobe dots, second pass (Amit: the smear looked like "nothing or a stripe"): the dots are always sharp dots. Each row is drawn where the lamp's last flash caught it, so at 33⅓ rpm the 180-dot row stands still and the other three creep; the lamp flashes 100 times a second (50 Hz mains). The smear band and the lamp-only dots are gone.
+- The table, third pass (Amit: "lose this walnut texture, use a metallic reflective surface"): dark polished metal. It mirrors the deck: RealityKit cannot reflect objects, so an upside-down copy of the deck's body stands under a partly see-through table. The copy does not move; only the plinth's sides and feet show in it. The table mirrors a dimmer studio of its own, so the reflection reads. The walnut textures and the dark patch under the deck are removed.
+- Reflections (Amit: "a more interesting reflection map"): the studio is a photographed 360° image, Poly Haven "Studio Small 08", CC0, in `RecordPlayer/Resources/studio.hdr`. Its white room is darkened in code so only its lamps are mirrored, and it is turned and tipped so they stand where the record and the table show them. The studio drawn in code is removed. RealityKit ignored a rotation of the light itself here, so the image is turned instead.
+- HUD redesign (Amit: the bar looked like "just placed something on screen"; a Sonnet agent built it, the supervising session reviewed it and made the track rows clickable):
+  - Right (Amit, second pass: playback apart from views, panel top-right at full height, deck pushed left): a full-height glass panel with the cover, title, artist, album, a progress line, transport, the track list (a click plays that track) and a footer (tracks, length, 33⅓ RPM).
+  - Bottom: the three views as a strip of thumbnails over the deck's space, real renders in `RecordPlayer/Resources/view-*.png`. Re-render them when the look of the deck changes.
+  - The deck is framed left of the panel (`CameraFraming.leavingRoom(left:right:)`). The window's minimum is 1100 × 720. H hides both.
+  - Third pass (Amit): the panel and the strip toggle apart. H shows or hides the playback panel, V the views strip; each has its own hide button and its own button to bring it back, and each choice is saved.
+  - "Load record" in the panel is a placeholder: it only says that picking arrives with Apple Music (M6).
+  - Screenshot: `docs/m5-hud.png`. `docs/m5-hud-min.png` and `docs/m5-hud-hidden.png` show the earlier layout.
+  - Not checked: clicks and the tonearm drag between the panels with a real pointer, clicking a track row, the slide animation.
+- Renders: `docs/m5-lighting-top.png`, `docs/m5-lighting-side.png`, `docs/m5-lighting-tonearm.png`.
+- Checked: 40 unit tests pass; the playback check passes; renders of all three views.
+- Not checked: the running app (60 fps with five shadowed lamps, the look with the tonearm blur on, the creeping dots in motion) and the Xcode project build.
+
 M5 so far (built by Sonnet and Opus agents, each task reviewed and re-run by the supervising session; not committed):
 - Done: every track carries its album and its cover (`Artwork`: an id and an image that loads when asked, so Apple Music covers fit later). The model gives the current song's cover.
 - Test record: the three MP3s have no album tag and no embedded cover, so each gets a generated cover in its own colour with the title on it.
@@ -84,7 +105,7 @@ M3 so far:
 - Test record: debug builds bundle the three MP3s in `ref/royality-free-music/` (`scripts/dev-build.sh`). They are not in the Xcode build or the friends' build.
 - The start/stop button lifts the needle and sends the arm home (Amit's call, 2026-11-12). Space and the media play/pause key pause in place and resume. With the arm at rest, both play from the first groove.
 - The needle plays from exactly where it lands, so dropping it mid-band starts mid-track.
-- The strobe dots turn with the platter while it spins up and settle to a standstill at 33⅓ rpm, as under a real strobe lamp. The platter speed itself is the real 33.3 rpm (measured in the running app).
+- The strobe dots were first frozen all round at 33⅓ rpm; replaced on 2026-11-15 (see the lighting rework). The platter speed itself is the real 33.3 rpm (measured in the running app).
 - Previous restarts the track after 3 seconds, otherwise goes to the one before.
 - Checked: 26 unit tests pass (`scripts/test.sh`); a muted headless run (`RecordPlayer --playback-check`) covers play, next, previous, stop/start, tonearm seek and the end of the record; the arm stays within 0.001 of the music's position.
 - Not checked: how it sounds, dragging with a real pointer, the media keys, and 60 fps while playing. Amit runs `scripts/dev-build.sh`, then opens `build/dev/RecordPlayer.app`.

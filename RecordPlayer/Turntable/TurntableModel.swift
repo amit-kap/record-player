@@ -161,8 +161,9 @@ final class TurntableModel {
         play(track: time > restartThreshold ? currentTrack : max(currentTrack - 1, 0))
     }
 
-    private func play(track: Int) {
-        guard layout.trackCount > 0 else { return }
+    /// Moves the needle to the start of a track and plays it, from rest too.
+    func play(track: Int) {
+        guard !isDragging, (0..<layout.trackCount).contains(track) else { return }
         let start = RecordLayout.Position(track: track, time: 0)
         targetSwing = geometry.swing(forProgress: layout.progress(track: track, time: 0))
         isNeedleDown = true

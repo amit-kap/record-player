@@ -18,26 +18,27 @@ public struct CameraFraming: Sendable, Equatable {
         self.halfExtent = halfExtent
     }
 
-    /// The same picture fitted into a view of `size` with `band` points kept clear at the bottom: the extent grows
-    /// just enough to fit above the band, and the target moves down so the picture sits centred above it.
-    /// `margin` must match the one the camera is fitted with.
+    /// The same picture fitted into a view of `size` with `left` and `right` points kept clear at the sides: the
+    /// extent grows just enough to fit between them, and the target moves so the picture sits centred in the space
+    /// that is left. `margin` must match the one the camera is fitted with.
     public func leavingRoom(
-        _ band: CGFloat,
+        left: CGFloat = 0,
+        right: CGFloat = 0,
         in size: CGSize,
         margin: Float = SceneCamera.fittingMargin
     ) -> CameraFraming {
-        guard band > 0, size.width > 0, size.height > band else { return self }
-        let aspect = Float(size.width / size.height)
-        let height = Float(size.height)
+        let free = size.width - left - right
+        guard left + right > 0, free > 0, size.height > 0 else { return self }
+        // Points per metre at which the extent, with the margin, just fits the free width and the full height.
+        let scale = min(Float(free) / (2 * halfExtent.x * margin), Float(size.height) / (2 * halfExtent.y * margin))
+        guard scale.isFinite, scale > 0 else { return self }
         var framing = self
-        // The half height to fit so that the original one fills only the space above the band.
-        let needed = halfExtent.y * height / (height - Float(band))
-        if needed > halfExtent.x / aspect { framing.halfExtent.y = needed }
-        // Visible half height at the target, in metres; half the band in metres is how far the picture moves up.
-        let halfHeight = max(framing.halfExtent.y, halfExtent.x / aspect) * margin
-        let shift = Float(band) * halfHeight / height
-        let length = simd_length(up)
-        if length > 1e-9 { framing.target -= up / length * shift }
+        // The camera fits the larger of the two, so this height holds whichever side limits the picture.
+        framing.halfExtent.y = Float(size.height) / (2 * scale * margin)
+        // To move the picture right by half the difference of the sides, the target moves left by as much.
+        let toTheRight = simd_cross(-direction, up)
+        let length = simd_length(toTheRight)
+        if length > 1e-9 { framing.target -= toTheRight / length * (Float(left - right) / 2 / scale) }
         return framing
     }
 }

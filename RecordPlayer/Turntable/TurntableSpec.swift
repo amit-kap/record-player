@@ -59,6 +59,16 @@ struct TurntableSpec: Sendable, Identifiable {
         var partName: String
     }
 
+    /// One ring of speed-check dots on the platter rim.
+    struct StrobeRow: Sendable {
+        /// Distance of the dots from the spindle, and their height.
+        var radius: Float
+        var height: Float
+        /// How many dots the ring has. The ring looks frozen when one dot spacing passes per lamp flash.
+        var count: Int
+        var dotRadius: Float
+    }
+
     var id: String
     var name: String
     /// The `.usdz` in the app's resources, without its extension.
@@ -72,9 +82,16 @@ struct TurntableSpec: Sendable, Identifiable {
     var strobeLampPart: String
     var strobeDotsPart: String
     var strobeLightPosition: SIMD3<Float>
+    var strobeRows: [StrobeRow]
+    /// Flashes of the strobe lamp per second: twice the mains frequency.
+    var strobeFlashRate: Float
+    /// The sloped band of the rim that carries the dots: inner and outer radius, and their heights.
+    var strobeBand: (inner: SIMD2<Float>, outer: SIMD2<Float>)
 
     /// Height of the surface the deck stands on, below its feet.
     var groundHeight: Float
+    /// Half width and half depth of the plinth, for the soft shadow under it.
+    var plinthHalfSize: SIMD2<Float>
     var platterTop: Float
     var recordTop: Float
     var labelRadius: Float
@@ -126,7 +143,18 @@ extension TurntableSpec {
         strobeLampPart: "StrobeLamp",
         strobeDotsPart: "StrobeDots",
         strobeLightPosition: [-0.186, 0.012, 0.105],
+        // 180 dots pass the lamp 100 times a second at exactly 33⅓ rpm; the other rows are for other speeds
+        // and mains frequencies, so at 33⅓ they creep.
+        strobeRows: [
+            StrobeRow(radius: 0.1640, height: 0.01910, count: 180, dotRadius: 0.00135),
+            StrobeRow(radius: 0.1603, height: 0.01947, count: 176, dotRadius: 0.00125),
+            StrobeRow(radius: 0.1568, height: 0.01982, count: 172, dotRadius: 0.00115),
+            StrobeRow(radius: 0.1535, height: 0.02015, count: 168, dotRadius: 0.00105),
+        ],
+        strobeFlashRate: 100,
+        strobeBand: (inner: [0.1522, 0.01998], outer: [0.1653, 0.01852]),
         groundHeight: -0.090,
+        plinthHalfSize: [0.226, 0.176],
         platterTop: 0.022,
         recordTop: 0.024,
         labelRadius: 0.05,

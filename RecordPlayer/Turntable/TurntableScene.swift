@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import RealityKit
 import TurntableCore
 
@@ -22,6 +23,13 @@ final class TurntableScene {
     private let theme: TurntableTheme
     /// Where the gaps between tracks are drawn on the record, 0...1 between the first and last groove.
     private let trackStarts: [Float]
+    private var ground = ModelEntity()
+    /// The studio the deck mirrors.
+    private let studio = Entity()
+    /// The dimmer studio that only the table mirrors.
+    private let groundStudio = Entity()
+    /// The deck's body as loaded.
+    private var deck = Entity()
     private var spinning = Entity()
     private var arm = Entity()
     private var platter = PlatterMotion()
@@ -38,11 +46,10 @@ final class TurntableScene {
     private var strobeLamp = Entity()
     private let strobeLight = Entity()
     private var strobeIsOn = false
-    /// The ring of strobe dots on the platter rim, and where it sat when loaded.
-    private var strobeDots: Entity?
-    private var strobeDotsBase = matrix_identity_float4x4
-    /// How far the dots appear to have turned. Under the strobe lamp they slow to a standstill at full speed.
-    private var strobeDotsAngle: Float = 0
+    /// The speed-check dots on the platter rim, one ring per row.
+    private var strobeRings: [ModelEntity] = []
+    /// Seconds the scene has run, for the lamp's flashes.
+    private var strobeClock: Double = 0
 
     /// The label as printed now, and a copy just above it that fades a new one in.
     private let label: LabelDisc
@@ -94,12 +101,14 @@ final class TurntableScene {
         self.placeholderLabel = placeholder
         self.incomingTexture = placeholder
         let labelMesh = try TurntableMeshes.disc(radius: spec.labelRadius)
-        self.label = LabelDisc(mesh: labelMesh, glow: theme.labelGlow)
-        self.incomingLabel = LabelDisc(mesh: labelMesh, glow: theme.labelGlow)
+        self.label = LabelDisc(mesh: labelMesh, finish: theme.label)
+        self.incomingLabel = LabelDisc(mesh: labelMesh, finish: theme.label)
 
         buildGround()
         try await loadModel()
         try await buildRecord()
+        try buildStrobe()
+        buildReflection()
         buildLights()
         try await applyEnvironment()
 
@@ -109,13 +118,14 @@ final class TurntableScene {
         root.addChild(camera)
         place(sceneCamera)
         applyLightReceiver(to: root)
+        ground.components.set(ImageBasedLightReceiverComponent(imageBasedLight: groundStudio))
         setStrobe(on: false)
         poseArm()
     }
 
     /// Loaded entities do not reliably inherit the image-based light, so every one gets it.
     private func applyLightReceiver(to entity: Entity) {
-        entity.components.set(ImageBasedLightReceiverComponent(imageBasedLight: root))
+        entity.components.set(ImageBasedLightReceiverComponent(imageBasedLight: studio))
         for child in entity.children { applyLightReceiver(to: child) }
     }
 
@@ -323,20 +333,62 @@ final class TurntableScene {
         shownArtworkID = incomingArtworkID
     }
 
-    /// On a real deck the strobe lamp flashes in step with the dots, so at the right speed they look frozen.
-    /// The dots turn with the platter at low speed and drift to a stop as it reaches 33⅓ rpm.
+    /// The strobe lamp flashes many times a second, so the dots are seen where each flash catches them. A row
+    /// whose dots advance exactly one spacing per flash stands still; the other rows creep. With the lamp off the
+    /// dots simply turn with the platter.
     private func poseStrobeDots(deltaTime dt: Float) {
-        guard let strobeDots else { return }
-        let ratio = min(1, platter.speed / PlatterMotion.fullSpeed)
-        strobeDotsAngle += platter.speed * dt * (1 - ratio * ratio * ratio)
-        strobeDotsAngle.formTruncatingRemainder(dividingBy: 2 * .pi)
-        let centre = SIMD3<Float>(geometry.spindle.x, 0, geometry.spindle.y)
-        var toCentre = matrix_identity_float4x4
-        toCentre.columns.3 = SIMD4<Float>(-centre, 1)
-        var back = matrix_identity_float4x4
-        back.columns.3 = SIMD4<Float>(centre, 1)
-        let turn = simd_float4x4(simd_quatf(angle: -strobeDotsAngle, axis: [0, 1, 0]))
-        strobeDots.setTransformMatrix(back * turn * toCentre * strobeDotsBase, relativeTo: root)
+        strobeClock += Double(dt)
+        let sinceFlash = strobeIsOn
+            ? Float(strobeClock.truncatingRemainder(dividingBy: 1 / Double(spec.strobeFlashRate))) : 0
+        let seen = platter.angle - platter.speed * sinceFlash
+        for (row, ring) in zip(spec.strobeRows, strobeRings) {
+            // A ring of dots looks the same after one spacing, so only the remainder is turned.
+            let spacing = 2 * Float.pi / Float(row.count)
+            ring.orientation = simd_quatf(angle: -seen.truncatingRemainder(dividingBy: spacing), axis: [0, 1, 0])
+        }
+    }
+
+    private func buildStrobe() throws {
+        // The model's own dots are one part and cannot creep row by row, so the rows are drawn here instead.
+        root.findEntity(named: spec.strobeDotsPart)?.isEnabled = false
+        let band = spec.strobeBand
+        let slope = (band.inner.y - band.outer.y) / (band.outer.x - band.inner.x)
+        for row in spec.strobeRows {
+            let ring = ModelEntity(
+                mesh: try TurntableMeshes.dotRing(
+                    radius: row.radius, count: row.count, dotRadius: row.dotRadius, slope: slope
+                ),
+                materials: [material(theme.strobeDots)]
+            )
+            ring.position = [geometry.spindle.x, row.height + 0.00015, geometry.spindle.y]
+            ring.components.set(ShadowOpt.none)
+            root.addChild(ring)
+            strobeRings.append(ring)
+        }
+    }
+
+    /// The table mirrors the deck. The renderer cannot reflect objects, so a copy of the body stands upside down
+    /// under the table. Only the plinth's sides and feet are ever seen in it, so the copy does not move.
+    private func buildReflection() {
+        let copy = deck.clone(recursive: true)
+        let mirror = Entity()
+        mirror.scale = [1, -1, 1]
+        mirror.position.y = 2 * spec.groundHeight
+        mirror.addChild(copy)
+        func prepare(_ entity: Entity) {
+            entity.components.set(ShadowOpt.none)
+            // Turning the copy upside down turns its faces inside out, so the other side of each is drawn.
+            if let model = entity as? ModelEntity, let materials = model.model?.materials {
+                model.model?.materials = materials.map { material in
+                    guard var flipped = material as? PhysicallyBasedMaterial else { return material }
+                    flipped.faceCulling = .front
+                    return flipped
+                }
+            }
+            entity.children.forEach(prepare)
+        }
+        prepare(mirror)
+        root.addChild(mirror)
     }
 
     private func poseArm() {
@@ -348,11 +400,14 @@ final class TurntableScene {
     // MARK: Building
 
     private func buildGround() {
-        let ground = ModelEntity(
-            mesh: .generatePlane(width: 8, depth: 8),
-            materials: [material(theme.ground)]
-        )
+        var metal = material(theme.surface.finish)
+        metal.anisotropyLevel = .init(floatLiteral: theme.surface.brushed)
+        // The table is partly see-through, so the upside-down copy of the deck under it shows as a reflection.
+        // A see-through metal keeps its full shine, so the lamps and the studio still mirror in it.
+        metal.blending = .transparent(opacity: .init(floatLiteral: 1 - theme.surface.mirror))
+        ground = ModelEntity(mesh: .generatePlane(width: 8, depth: 8), materials: [metal])
         ground.position.y = spec.groundHeight
+        ground.components.set(ShadowOpt.none)
         root.addChild(ground)
     }
 
@@ -362,6 +417,7 @@ final class TurntableScene {
         }
         let model = try await Entity(contentsOf: url)
         root.addChild(model)
+        deck = model
 
         func part(_ name: String) throws -> Entity {
             guard let entity = model.findEntity(named: name) else { throw TurntableSceneError.partMissing(name) }
@@ -370,14 +426,12 @@ final class TurntableScene {
         spinning = try part(spec.spinPart)
         arm = try part(spec.armPart)
         strobeLamp = try part(spec.strobeLampPart)
-        strobeDots = model.findEntity(named: spec.strobeDotsPart)
         for (control, shape) in spec.controls {
             let button = try part(shape.partName)
             buttons[control] = button
             buttonRest[control] = button.position(relativeTo: root)
         }
         spinBase = spinning.orientation(relativeTo: root)
-        strobeDotsBase = strobeDots?.transformMatrix(relativeTo: root) ?? matrix_identity_float4x4
         armBase = arm.orientation(relativeTo: root)
         record.position = [geometry.spindle.x, 0, geometry.spindle.y]
         root.addChild(record)
@@ -417,21 +471,40 @@ final class TurntableScene {
         let radius = geometry.recordRadius
         let labelRadius = spec.labelRadius
 
-        record.addChild(cylinder(radius: radius, from: spec.platterTop, to: spec.recordTop, theme.vinyl))
+        var edge = material(theme.vinyl)
+        edge.roughness = .init(floatLiteral: theme.vinylSmooth)
+        let body = ModelEntity(
+            mesh: .generateCylinder(height: spec.recordTop - spec.platterTop, radius: radius), materials: [edge]
+        )
+        body.position.y = (spec.platterTop + spec.recordTop) / 2
+        record.addChild(body)
 
+        let leadIn = CGFloat(geometry.leadInRadius / radius)
+        let leadOut = CGFloat(geometry.leadOutRadius / radius)
+        let gaps = trackStarts.dropFirst().map { CGFloat($0) }
         let grooves = try await TextureResource(
             image: TurntableTextures.vinyl(
-                base: theme.vinyl.white,
-                leadInFraction: CGFloat(geometry.leadInRadius / radius),
-                leadOutFraction: CGFloat(geometry.leadOutRadius / radius),
-                trackStarts: trackStarts.dropFirst().map { CGFloat($0) }
+                base: theme.vinyl.white, leadInFraction: leadIn, leadOutFraction: leadOut, trackStarts: gaps
             ),
             options: .init(semantic: .color)
         )
-        var vinyl = material(theme.vinyl)
-        vinyl.specular = 0.15
+        let roughness = try await TextureResource(
+            image: TurntableTextures.vinylRoughness(
+                grooves: CGFloat(theme.vinyl.roughness), smooth: CGFloat(theme.vinylSmooth),
+                leadInFraction: leadIn, leadOutFraction: leadOut, trackStarts: gaps
+            ),
+            options: .init(semantic: .raw)
+        )
+        // The grooves run around the record, so they smear a lamp's reflection into a streak across them. The
+        // streak comes from the lamps and the studio, so it stays put while the record turns and moves with the camera.
+        var vinyl = PhysicallyBasedMaterial()
         vinyl.baseColor = .init(tint: .white, texture: .init(grooves))
-        let surface = ModelEntity(mesh: try TurntableMeshes.disc(radius: radius), materials: [vinyl])
+        vinyl.roughness = .init(scale: 1, texture: .init(roughness))
+        vinyl.metallic = 0.0
+        vinyl.anisotropyLevel = .init(floatLiteral: theme.vinylStreak)
+        let surface = ModelEntity(
+            mesh: try TurntableMeshes.ring(inner: labelRadius * 0.9, outer: radius), materials: [vinyl]
+        )
         surface.position.y = spec.recordTop + 0.0002
         record.addChild(surface)
 
@@ -442,69 +515,68 @@ final class TurntableScene {
         incomingLabel.entity.components.set(ShadowOpt.none)
         incomingLabel.entity.isEnabled = false
         record.addChild(incomingLabel.entity)
-
-        // The light streaks do not turn with the record.
-        let sheenTexture = try await TextureResource(
-            image: TurntableTextures.sheen(
-                strength: theme.sheen,
-                innerFraction: CGFloat(labelRadius / radius),
-                // The streak lies along the line from the spindle toward the key lamp.
-                angle: CGFloat(atan2(
-                    theme.keyPosition.z - geometry.spindle.y, theme.keyPosition.x - geometry.spindle.x
-                ))
-            ),
-            options: .init(semantic: .color)
-        )
-        var sheen = UnlitMaterial()
-        sheen.color = .init(tint: .white, texture: .init(sheenTexture))
-        sheen.blending = .transparent(opacity: 1.0)
-        let streaks = ModelEntity(mesh: try TurntableMeshes.disc(radius: radius), materials: [sheen])
-        streaks.position = [geometry.spindle.x, spec.recordTop + 0.0006, geometry.spindle.y]
-        streaks.components.set(ShadowOpt.none)
-        root.addChild(streaks)
     }
 
     private func buildLights() {
-        // The key: one lamp off to the back left. Everything else is there only to keep its shadows from going black.
-        let key = Entity()
-        let lamp = SpotLightComponent(
-            color: .white,
-            intensity: theme.keyLight,
-            innerAngleInDegrees: theme.keyInnerAngle,
-            outerAngleInDegrees: theme.keyOuterAngle,
-            attenuationRadius: 8
-        )
-        key.components.set(lamp)
-        key.components.set(SpotLightComponent.Shadow())
-        key.look(at: [0, 0, 0.02], from: theme.keyPosition, relativeTo: nil)
-        root.addChild(key)
+        let target = SIMD3<Float>(0, 0, 0.02)
+        // A real lamp has a size, which is what makes shadow edges soft. A spot here is a point, so the key is
+        // several spots spread over the lamp's face, each with its own shadow.
+        let toDeck = simd_normalize(target - theme.key.position)
+        let across = simd_normalize(simd_cross(toDeck, [0, 1, 0]))
+        let up = simd_cross(across, toDeck)
+        let count = max(1, theme.keySamples)
+        for i in 0..<count {
+            var offset = SIMD3<Float>.zero
+            if i > 0 {
+                let angle = Float(i - 1) / Float(count - 1) * 2 * .pi
+                offset = (across * cos(angle) + up * sin(angle)) * theme.keySize
+            }
+            var lamp = theme.key
+            lamp.position += offset
+            lamp.intensity /= Float(count)
+            root.addChild(spot(lamp, at: target, shadow: true))
+        }
+        root.addChild(spot(theme.rim, at: [geometry.spindle.x, 0, geometry.spindle.y], shadow: false))
+    }
 
-        let fill = Entity()
-        fill.components.set(SpotLightComponent(
-            color: .white,
-            intensity: theme.fillLight,
-            innerAngleInDegrees: 18,
-            outerAngleInDegrees: 46,
-            attenuationRadius: 6
+    private func spot(_ lamp: TurntableTheme.Lamp, at target: SIMD3<Float>, shadow: Bool) -> Entity {
+        let entity = Entity()
+        entity.components.set(SpotLightComponent(
+            color: NSColor(
+                red: CGFloat(lamp.color.x), green: CGFloat(lamp.color.y), blue: CGFloat(lamp.color.z), alpha: 1
+            ),
+            intensity: lamp.intensity,
+            innerAngleInDegrees: lamp.innerAngle,
+            outerAngleInDegrees: lamp.outerAngle,
+            attenuationRadius: 8
         ))
-        fill.look(
-            at: [geometry.spindle.x, 0, geometry.spindle.y],
-            from: [geometry.spindle.x, 1.3, geometry.spindle.y],
-            upVector: [0, 0, -1],
-            relativeTo: nil
-        )
-        root.addChild(fill)
+        if shadow { entity.components.set(SpotLightComponent.Shadow()) }
+        entity.look(at: target, from: lamp.position, relativeTo: nil)
+        return entity
     }
 
     private func applyEnvironment() async throws {
+        // Read as floats, so lamps brighter than white keep their strength.
+        guard let url = Bundle.main.url(forResource: theme.studio, withExtension: "hdr"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(
+                  source, 0, [kCGImageSourceShouldAllowFloat: true] as CFDictionary
+              ) else {
+            throw TurntableSceneError.partMissing(theme.studio)
+        }
         let environment = try await EnvironmentResource(
-            equirectangular: TurntableTextures.studioEnvironment()
+            equirectangular: TurntableTextures.turned(
+                image, turn: theme.studioTurn, tilt: theme.studioTilt, lampLevel: theme.studioLampLevel
+            )
         )
-        root.components.set(ImageBasedLightComponent(
-            source: .single(environment),
-            intensityExponent: log2(max(theme.environment, 0.001))
-        ))
-        root.components.set(ImageBasedLightReceiverComponent(imageBasedLight: root))
+        func light(_ entity: Entity, strength: Float) {
+            entity.components.set(ImageBasedLightComponent(
+                source: .single(environment), intensityExponent: log2(max(strength, 0.001))
+            ))
+            root.addChild(entity)
+        }
+        light(studio, strength: theme.environment)
+        light(groundStudio, strength: theme.environment * theme.surface.studio)
     }
 
     // MARK: Parts
@@ -516,50 +588,25 @@ final class TurntableScene {
         material.metallic = .init(floatLiteral: finish.metallic)
         return material
     }
-
-    /// An upright cylinder between two heights.
-    private func cylinder(
-        radius: Float, from bottom: Float, to top: Float, _ finish: TurntableTheme.Finish
-    ) -> ModelEntity {
-        let entity = ModelEntity(
-            mesh: .generateCylinder(height: top - bottom, radius: radius),
-            materials: [material(finish)]
-        )
-        entity.position.y = (bottom + top) / 2
-        return entity
-    }
 }
 
-/// A record label: printed paper lit by the scene, under an unlit copy that lets the print glow a little by itself,
-/// so the artwork stays vivid in a dark scene.
+/// A record label: printed paper, lit and shadowed by the scene like everything else on the deck.
 @MainActor
 private final class LabelDisc {
-    let entity = Entity()
-    private let paper: ModelEntity
-    private let glow: ModelEntity
-    /// How much of the unlit copy shows through, 0...1.
-    private let glowStrength: Float
+    let entity: ModelEntity
+    private let finish: TurntableTheme.Finish
 
-    init(mesh: MeshResource, glow strength: Float) {
-        paper = ModelEntity(mesh: mesh)
-        glow = ModelEntity(mesh: mesh)
-        glowStrength = strength
-        glow.position.y = 0.00005
-        glow.components.set(ShadowOpt.none)
-        entity.addChild(paper)
-        entity.addChild(glow)
+    init(mesh: MeshResource, finish: TurntableTheme.Finish) {
+        entity = ModelEntity(mesh: mesh)
+        self.finish = finish
     }
 
     func show(_ texture: TextureResource) {
         var print = PhysicallyBasedMaterial()
-        print.baseColor = .init(tint: .white, texture: .init(texture))
-        print.roughness = 0.7
-        print.metallic = 0.0
-        paper.model?.materials = [print]
-        var light = UnlitMaterial()
-        light.color = .init(tint: .white, texture: .init(texture))
-        light.blending = .transparent(opacity: .init(floatLiteral: glowStrength))
-        glow.model?.materials = [light]
+        print.baseColor = .init(tint: NSColor(white: finish.white, alpha: 1), texture: .init(texture))
+        print.roughness = .init(floatLiteral: finish.roughness)
+        print.metallic = .init(floatLiteral: finish.metallic)
+        entity.model?.materials = [print]
     }
 }
 

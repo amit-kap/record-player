@@ -1,5 +1,7 @@
 import AppKit
 import CoreGraphics
+import simd
+
 
 /// Images drawn in code, so the turntable needs no asset files.
 enum TurntableTextures {
@@ -35,12 +37,12 @@ enum TurntableTextures {
         let first = leadOutFraction * outer
         let last = leadInFraction * outer
         var radius = first
-        var drift: CGFloat = 0.012
+        var drift: CGFloat = 0.008
         ctx.setLineWidth(1.5)
         while radius < last {
             // A slow drift gives the bands of louder and quieter grooves that read from a distance.
-            drift = min(0.03, max(0.0, drift + CGFloat.random(in: -0.005...0.005, using: &generator)))
-            let tone = base + drift + CGFloat.random(in: 0.0...0.022, using: &generator)
+            drift = min(0.018, max(0.0, drift + CGFloat.random(in: -0.003...0.003, using: &generator)))
+            let tone = base + drift + CGFloat.random(in: 0.0...0.012, using: &generator)
             ctx.setStrokeColor(gray: tone, alpha: 1)
             ctx.strokeEllipse(in: CGRect(
                 x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2
@@ -58,39 +60,35 @@ enum TurntableTextures {
         return ctx.makeImage()!
     }
 
-    /// Two soft light streaks that stay put while the record turns under them.
-    static func sheen(size: Int = 1024, strength: CGFloat, innerFraction: CGFloat, angle: CGFloat) -> CGImage {
+    /// The record's roughness: fine grooves are a little rough; the smooth bands between tracks and the run-out are
+    /// glossier.
+    static func vinylRoughness(
+        size: Int = 1024,
+        grooves: CGFloat,
+        smooth: CGFloat,
+        leadInFraction: CGFloat,
+        leadOutFraction: CGFloat,
+        trackStarts: [CGFloat]
+    ) -> CGImage {
         let ctx = context(width: size, height: size)
-        let data = ctx.data!.bindMemory(to: UInt8.self, capacity: size * size * 4)
-        let half = Double(size) / 2
-        var noise: UInt32 = 7
-        for y in 0..<size {
-            for x in 0..<size {
-                let dx = (Double(x) + 0.5 - half) / half
-                let dy = (Double(y) + 0.5 - half) / half
-                let r = (dx * dx + dy * dy).squareRoot()
-                var alpha = 0.0
-                if r < 1, r > Double(innerFraction) {
-                    let theta = atan2(dy, dx) - Double(angle)
-                    // One strong streak and a fainter one opposite, each with a soft halo.
-                    let facing = cos(theta)
-                    let side = facing > 0 ? 1.0 : 0.45
-                    let streak = pow(abs(facing), 90) * side
-                    let wide = pow(abs(facing), 12) * 0.16 * side
-                    let edge = smoothstep(Double(innerFraction), Double(innerFraction) + 0.04, r)
-                        * (1 - smoothstep(0.96, 1.0, r))
-                    alpha = (streak + wide) * edge * Double(strength)
-                }
-                // Dither, so the faint end of the streak fades smoothly instead of in visible steps.
-                noise = noise &* 1_664_525 &+ 1_013_904_223
-                let dither = Double(noise >> 8 & 0xFFFF) / 65535 - 0.5
-                let value = UInt8(max(0, min(255, alpha * 255 + (alpha > 0 ? dither : 0))))
-                let i = (y * size + x) * 4
-                data[i] = value
-                data[i + 1] = value
-                data[i + 2] = value
-                data[i + 3] = value
-            }
+        let centre = CGPoint(x: size / 2, y: size / 2)
+        let outer = CGFloat(size) / 2
+        let first = leadOutFraction * outer
+        let last = leadInFraction * outer
+
+        ctx.setFillColor(gray: smooth, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: size, height: size))
+
+        ctx.setFillColor(gray: grooves, alpha: 1)
+        ctx.addEllipse(in: CGRect(x: centre.x - last, y: centre.y - last, width: last * 2, height: last * 2))
+        ctx.addEllipse(in: CGRect(x: centre.x - first, y: centre.y - first, width: first * 2, height: first * 2))
+        ctx.fillPath(using: .evenOdd)
+
+        ctx.setLineWidth(max(2, CGFloat(size) / 440))
+        ctx.setStrokeColor(gray: smooth, alpha: 1)
+        for start in trackStarts {
+            let r = last - start * (last - first)
+            ctx.strokeEllipse(in: CGRect(x: centre.x - r, y: centre.y - r, width: r * 2, height: r * 2))
         }
         return ctx.makeImage()!
     }
@@ -137,40 +135,6 @@ enum TurntableTextures {
         let bounds = string.size()
         string.draw(at: CGPoint(x: centre.x - bounds.width / 2, y: centre.y - bounds.height / 2))
     }
-
-    /// A small studio: dark room, soft overhead light and two strip lights, as an equirectangular image for reflections.
-    static func studioEnvironment(width: Int = 1024) -> CGImage {
-        let height = width / 2
-        let ctx = context(width: width, height: height)
-        let w = CGFloat(width)
-        let h = CGFloat(height)
-
-        // CoreGraphics origin is bottom-left: y = h is straight up.
-        let colors = [
-            CGColor(gray: 0.015, alpha: 1), CGColor(gray: 0.05, alpha: 1),
-            CGColor(gray: 0.08, alpha: 1), CGColor(gray: 0.13, alpha: 1),
-        ] as CFArray
-        let gradient = CGGradient(
-            colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
-            colors: colors,
-            locations: [0, 0.5, 0.82, 1]
-        )!
-        ctx.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: h), options: [])
-
-        // Strip lights partway up the walls.
-        ctx.setFillColor(gray: 1, alpha: 0.9)
-        for centre in [0.18, 0.62] as [CGFloat] {
-            let rect = CGRect(x: w * (centre - 0.035), y: h * 0.60, width: w * 0.07, height: h * 0.2)
-            ctx.addPath(CGPath(roundedRect: rect, cornerWidth: w * 0.01, cornerHeight: w * 0.01, transform: nil))
-            ctx.fillPath()
-        }
-        return ctx.makeImage()!
-    }
-
-    private static func smoothstep(_ a: Double, _ b: Double, _ x: Double) -> Double {
-        let t = max(0, min(1, (x - a) / (b - a)))
-        return t * t * (3 - 2 * t)
-    }
 }
 
 /// Deterministic random numbers, so the grooves look the same on every launch.
@@ -182,5 +146,47 @@ private struct SeededGenerator: RandomNumberGenerator {
         state ^= state >> 7
         state ^= state << 17
         return state
+    }
+}
+
+extension TurntableTextures {
+    /// A 360° image turned about the upright axis and then tipped about a level one, in degrees. Float pixels, so
+    /// lamps brighter than white keep their strength. Everything dimmer than `lampLevel` is darkened, the more the
+    /// dimmer it is, so a bright room becomes a dark one with only its lamps left.
+    static func turned(_ image: CGImage, turn: Float, tilt: Float, lampLevel: Float, width: Int = 1024) -> CGImage {
+        let height = width / 2
+        let space = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+        let info = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.floatComponents.rawValue
+            | CGBitmapInfo.byteOrder32Little.rawValue
+        func canvas() -> CGContext {
+            CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 32, bytesPerRow: width * 16,
+                space: space, bitmapInfo: info
+            )!
+        }
+        let source = canvas()
+        source.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let result = canvas()
+        let from = source.data!.bindMemory(to: SIMD4<Float>.self, capacity: width * height)
+        let to = result.data!.bindMemory(to: SIMD4<Float>.self, capacity: width * height)
+        // Each pixel of the result looks back along the rotation to where it came from.
+        let back = (simd_quatf(angle: tilt * .pi / 180, axis: [1, 0, 0])
+            * simd_quatf(angle: turn * .pi / 180, axis: [0, 1, 0])).inverse
+        for y in 0..<height {
+            let latitude = (0.5 - (Float(y) + 0.5) / Float(height)) * .pi
+            for x in 0..<width {
+                let longitude = ((Float(x) + 0.5) / Float(width) - 0.5) * 2 * .pi
+                let direction = back.act([cos(latitude) * sin(longitude), sin(latitude), cos(latitude) * cos(longitude)])
+                let u = atan2(direction.x, direction.z) / (2 * .pi) + 0.5
+                let v = 0.5 - asin(max(-1, min(1, direction.y))) / .pi
+                let column = min(width - 1, max(0, Int(u * Float(width))))
+                let row = min(height - 1, max(0, Int(v * Float(height))))
+                let pixel = from[row * width + column]
+                let brightness = max(0, (pixel.x + pixel.y + pixel.z) / 3)
+                let kept = min(1, brightness / lampLevel)
+                to[y * width + x] = SIMD4(pixel.x * kept * kept, pixel.y * kept * kept, pixel.z * kept * kept, 1)
+            }
+        }
+        return result.makeImage()!
     }
 }

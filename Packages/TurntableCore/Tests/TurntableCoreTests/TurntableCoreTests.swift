@@ -366,18 +366,20 @@ struct LeavingRoomTests {
         target: SIMD3(0.01, 0.02, -0.03), direction: [0, 1, 0], up: [0, 0, -1], halfExtent: SIMD2(0.25, 0.19)
     )
     let fov: Float = 30 * .pi / 180
-    let band: CGFloat = 66
 
-    @Test func noBandLeavesFramingUnchanged() {
-        #expect(framing.leavingRoom(0, in: CGSize(width: 800, height: 500)) == framing)
+    @Test func noRoomLeavesFramingUnchanged() {
+        #expect(framing.leavingRoom(in: CGSize(width: 800, height: 500)) == framing)
     }
 
     @Test(arguments: [
-        CGSize(width: 800, height: 500), CGSize(width: 1280, height: 800),
-        CGSize(width: 1600, height: 500), CGSize(width: 500, height: 900),
+        (CGSize(width: 800, height: 500), CGFloat(300), CGFloat(170)),
+        (CGSize(width: 1280, height: 800), 332, 182),
+        (CGSize(width: 1600, height: 500), 0, 182),
+        (CGSize(width: 1100, height: 900), 332, 0),
+        (CGSize(width: 1000, height: 400), 200, 200),
     ])
-    func extentFitsCentredAboveBand(size: CGSize) throws {
-        let camera = SceneCamera.fitting(framing.leavingRoom(band, in: size), in: size, verticalFOV: fov)
+    func extentFitsCentredBetweenSides(size: CGSize, left: CGFloat, right: CGFloat) throws {
+        let camera = SceneCamera.fitting(framing.leavingRoom(left: left, right: right, in: size), in: size, verticalFOV: fov)
         // The original extent with the fitting margin, measured from the original target.
         let half = framing.halfExtent * SceneCamera.fittingMargin
         var xs: [CGFloat] = [], ys: [CGFloat] = []
@@ -389,9 +391,16 @@ struct LeavingRoomTests {
                 ys.append(location.y)
             }
         }
-        #expect(xs.min()! >= -1 && xs.max()! <= size.width + 1)
-        #expect(ys.min()! >= -1 && ys.max()! <= size.height - band + 1)
-        #expect(abs((xs.min()! + xs.max()!) / 2 - size.width / 2) < 1)
-        #expect(abs((ys.min()! + ys.max()!) / 2 - (size.height - band) / 2) < 1)
+        #expect(xs.min()! >= left - 1 && xs.max()! <= size.width - right + 1)
+        #expect(ys.min()! >= -1 && ys.max()! <= size.height + 1)
+        #expect(abs((xs.min()! + xs.max()!) / 2 - (left + size.width - right) / 2) < 1)
+        #expect(abs((ys.min()! + ys.max()!) / 2 - size.height / 2) < 1)
+    }
+
+    @Test func roomOnlyAtTheLeftMovesThePictureRight() throws {
+        let size = CGSize(width: 1000, height: 600)
+        let camera = SceneCamera.fitting(framing.leavingRoom(left: 300, in: size), in: size, verticalFOV: fov)
+        let centre = try #require(camera.viewLocation(for: framing.target, in: size))
+        #expect(centre.x > size.width / 2)
     }
 }

@@ -207,6 +207,7 @@ enum TurntableSnapshot {
         let renderer = try RealityRenderer()
         renderer.entities.append(scene.root)
         renderer.activeCamera = scene.camera
+        renderer.cameraSettings.antialiasing = .multisample4X
 
         guard let device = MTLCreateSystemDefaultDevice() else { throw CocoaError(.featureUnsupported) }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(

@@ -6,31 +6,59 @@ struct ContentView: View {
     @State private var cameraView: TurntableCameraView = .top
     @State private var adjustedPoses: [TurntableCameraView: CameraPose] = [:]
     @State private var isAdjustingCamera = false
-    /// Whether the panel shows: the saved choice, or a launch flag's for that launch only. Plain state rather than
-    /// `@AppStorage`, so a toggle's animation reaches the panel's transition.
-    @State private var isHUDShown = ContentView.hudFlag
-        ?? UserDefaults.standard.object(forKey: ContentView.hudKey) as? Bool ?? true
+    /// Whether the playback panel and the views strip show, each on its own: the saved choice, or a launch flag's
+    /// for that launch only. Plain state rather than `@AppStorage`, so a toggle's animation reaches the transition.
+    @State private var isPlaybackShown = ContentView.hudFlag
+        ?? UserDefaults.standard.object(forKey: ContentView.playbackKey) as? Bool ?? true
+    @State private var isViewsShown = ContentView.hudFlag
+        ?? UserDefaults.standard.object(forKey: ContentView.viewsKey) as? Bool ?? true
     @State private var pointer = PointerActivity()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HUDFramedTurntable(
-            model: turntable, cameraView: cameraView, adjustedPoses: adjustedPoses, room: isHUDShown ? 1 : 0
+            model: turntable, cameraView: cameraView, adjustedPoses: adjustedPoses, room: isPlaybackShown ? 1 : 0
         )
-            // With reduced motion the deck moves at once, while the panel only fades.
-            .animation(reduceMotion ? nil : Self.hudMotion, value: isHUDShown)
-            .frame(minWidth: 800, minHeight: 500)
-            .overlay(alignment: .bottom) {
-                if isHUDShown {
-                    HUDPanel(model: turntable, cameraView: $cameraView, hide: toggleHUD)
-                        .padding([.horizontal, .bottom], HUDPanel.inset)
-                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+            // With reduced motion the deck moves at once, while the panels only fade.
+            .animation(reduceMotion ? nil : Self.hudMotion, value: isPlaybackShown)
+            .frame(minWidth: HUDLayout.minimumSize.width, minHeight: HUDLayout.minimumSize.height)
+            .overlay(alignment: .trailing) {
+                if isPlaybackShown {
+                    HUDDetailPanel(model: turntable, hide: togglePlayback)
+                        .padding(HUDLayout.inset)
+                        // Up into the title bar's space: the panel runs the window's full height.
+                        .ignoresSafeArea()
+                        .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .overlay(alignment: .bottomTrailing) {
-                if !isHUDShown {
-                    HUDShowButton(pointer: pointer, show: toggleHUD)
-                        .padding(HUDPanel.inset)
+            .overlay(alignment: .bottom) {
+                // Centred under the deck, in the space the playback panel leaves.
+                Group {
+                    if isViewsShown {
+                        HUDViewStrip(cameraView: $cameraView, hide: toggleViews)
+                            .padding(.bottom, HUDLayout.inset)
+                            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                    } else {
+                        HUDShowButton(
+                            symbol: "rectangle.split.3x1", label: "Show views", help: "Show views (V)",
+                            pointer: pointer, show: toggleViews
+                        )
+                        .padding(.bottom, HUDLayout.inset)
+                        .transition(.opacity)
+                    }
+                }
+                .padding(.trailing, isPlaybackShown ? HUDLayout.rightRoom : 0)
+            }
+            .overlay(alignment: .topTrailing) {
+                if !isPlaybackShown {
+                    // Where the panel's own hide button sits, so the toggle stays in one place.
+                    HUDShowButton(
+                        symbol: "sidebar.right", label: "Show playback", help: "Show playback (H)",
+                        pointer: pointer, show: togglePlayback
+                    )
+                        .padding(.top, 29)
+                        .padding(.trailing, 25)
+                        .ignoresSafeArea()
                         .transition(.opacity)
                 }
             }
@@ -52,7 +80,7 @@ struct ContentView: View {
                         }
                     )
                     .padding(.top, 36)
-                    .padding(.trailing, 16)
+                    .padding(.trailing, isPlaybackShown ? HUDLayout.rightRoom : 16)
                     .transition(.opacity)
                 }
             }
@@ -93,12 +121,13 @@ struct ContentView: View {
         #endif
     }
 
-    /// The panel and the deck move with this one curve, so they arrive together.
+    /// The panels and the deck move with this one curve, so they arrive together.
     private static let hudMotion = Animation.easeOut(duration: 0.3)
 
-    private static let hudKey = "hudShown"
+    private static let playbackKey = "hudShown"
+    private static let viewsKey = "viewsShown"
 
-    /// `--hud` and `--no-hud` show or hide the HUD for one launch, for checking both on screen.
+    /// `--hud` and `--no-hud` show or hide the panel and the strip for one launch, for checking both on screen.
     private static var hudFlag: Bool? {
         #if DEBUG
         if CommandLine.arguments.contains("--no-hud") { return false }
@@ -108,10 +137,16 @@ struct ContentView: View {
     }
 
     /// A toggle is the user's choice, so it is saved.
-    private func toggleHUD() {
-        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : Self.hudMotion) { isHUDShown.toggle() }
-        UserDefaults.standard.set(isHUDShown, forKey: Self.hudKey)
+    private func togglePlayback() {
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : Self.hudMotion) { isPlaybackShown.toggle() }
+        UserDefaults.standard.set(isPlaybackShown, forKey: Self.playbackKey)
         // The button that brings it back shows for a moment, even when the pointer is elsewhere.
+        pointer.moved()
+    }
+
+    private func toggleViews() {
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : Self.hudMotion) { isViewsShown.toggle() }
+        UserDefaults.standard.set(isViewsShown, forKey: Self.viewsKey)
         pointer.moved()
     }
 
@@ -124,8 +159,10 @@ struct ContentView: View {
                 .keyboardShortcut(.leftArrow, modifiers: [])
             Button("Next track") { turntable.nextTrack() }
                 .keyboardShortcut(.rightArrow, modifiers: [])
-            Button("Show or hide controls") { toggleHUD() }
+            Button("Show or hide playback") { togglePlayback() }
                 .keyboardShortcut("h", modifiers: [])
+            Button("Show or hide views") { toggleViews() }
+                .keyboardShortcut("v", modifiers: [])
             Button("Adjust camera") { withAnimation(.easeOut(duration: 0.15)) { isAdjustingCamera.toggle() } }
                 .keyboardShortcut("a", modifiers: [])
             ForEach(Array(TurntableCameraView.allCases.enumerated()), id: \.element) { index, view in
