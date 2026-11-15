@@ -333,3 +333,65 @@ struct SceneCameraTests {
         }
     }
 }
+
+@Suite("CoverColor")
+struct CoverColorTests {
+    @Test func sameTitleSameHue() {
+        #expect(CoverColor.hue(for: "Cyberpunk") == CoverColor.hue(for: "Cyberpunk"))
+    }
+
+    @Test func hueStaysInRange() {
+        for title in ["", "O christmas tree", "Aggressive trailer intro", "Cyberpunk cyberpunk music", "日本語"] {
+            let hue = CoverColor.hue(for: title)
+            #expect(hue >= 0 && hue < 1)
+        }
+    }
+
+    @Test func differentTitlesGetClearlyDifferentHues() {
+        let titles = ["O christmas tree", "Aggressive trailer intro", "Cyberpunk cyberpunk music"]
+        let hues = titles.map(CoverColor.hue(for:))
+        for i in hues.indices {
+            for j in hues.indices where j > i {
+                let d = abs(hues[i] - hues[j])
+                #expect(min(d, 1 - d) >= 0.08, "\(titles[i]) and \(titles[j]) are too close")
+            }
+        }
+    }
+}
+
+@Suite("Leaving room")
+struct LeavingRoomTests {
+    /// Looking straight down at the deck, with the top of the picture toward the back.
+    let framing = CameraFraming(
+        target: SIMD3(0.01, 0.02, -0.03), direction: [0, 1, 0], up: [0, 0, -1], halfExtent: SIMD2(0.25, 0.19)
+    )
+    let fov: Float = 30 * .pi / 180
+    let band: CGFloat = 66
+
+    @Test func noBandLeavesFramingUnchanged() {
+        #expect(framing.leavingRoom(0, in: CGSize(width: 800, height: 500)) == framing)
+    }
+
+    @Test(arguments: [
+        CGSize(width: 800, height: 500), CGSize(width: 1280, height: 800),
+        CGSize(width: 1600, height: 500), CGSize(width: 500, height: 900),
+    ])
+    func extentFitsCentredAboveBand(size: CGSize) throws {
+        let camera = SceneCamera.fitting(framing.leavingRoom(band, in: size), in: size, verticalFOV: fov)
+        // The original extent with the fitting margin, measured from the original target.
+        let half = framing.halfExtent * SceneCamera.fittingMargin
+        var xs: [CGFloat] = [], ys: [CGFloat] = []
+        for sx: Float in [-1, 1] {
+            for sz: Float in [-1, 1] {
+                let corner = framing.target + SIMD3(half.x * sx, 0, half.y * sz)
+                let location = try #require(camera.viewLocation(for: corner, in: size))
+                xs.append(location.x)
+                ys.append(location.y)
+            }
+        }
+        #expect(xs.min()! >= -1 && xs.max()! <= size.width + 1)
+        #expect(ys.min()! >= -1 && ys.max()! <= size.height - band + 1)
+        #expect(abs((xs.min()! + xs.max()!) / 2 - size.width / 2) < 1)
+        #expect(abs((ys.min()! + ys.max()!) / 2 - (size.height - band) / 2) < 1)
+    }
+}

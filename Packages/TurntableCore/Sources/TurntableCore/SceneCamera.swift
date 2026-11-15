@@ -17,6 +17,29 @@ public struct CameraFraming: Sendable, Equatable {
         self.up = up
         self.halfExtent = halfExtent
     }
+
+    /// The same picture fitted into a view of `size` with `band` points kept clear at the bottom: the extent grows
+    /// just enough to fit above the band, and the target moves down so the picture sits centred above it.
+    /// `margin` must match the one the camera is fitted with.
+    public func leavingRoom(
+        _ band: CGFloat,
+        in size: CGSize,
+        margin: Float = SceneCamera.fittingMargin
+    ) -> CameraFraming {
+        guard band > 0, size.width > 0, size.height > band else { return self }
+        let aspect = Float(size.width / size.height)
+        let height = Float(size.height)
+        var framing = self
+        // The half height to fit so that the original one fills only the space above the band.
+        let needed = halfExtent.y * height / (height - Float(band))
+        if needed > halfExtent.x / aspect { framing.halfExtent.y = needed }
+        // Visible half height at the target, in metres; half the band in metres is how far the picture moves up.
+        let halfHeight = max(framing.halfExtent.y, halfExtent.x / aspect) * margin
+        let shift = Float(band) * halfHeight / height
+        let length = simd_length(up)
+        if length > 1e-9 { framing.target -= up / length * shift }
+        return framing
+    }
 }
 
 /// A perspective camera anywhere in the scene. World y is up; the table is the plane y = 0; table points are SIMD2(x, z).
@@ -57,12 +80,15 @@ public struct SceneCamera: Sendable, Equatable {
 
     // MARK: Fitting
 
+    /// How much room `fitting` leaves around a framing's extent, as a factor.
+    public static let fittingMargin: Float = 1.1
+
     /// The nearest camera on the framing's direction at which `halfExtent * margin` fits a view of `size`.
     public static func fitting(
         _ framing: CameraFraming,
         in size: CGSize,
         verticalFOV: Float,
-        margin: Float = 1.1
+        margin: Float = fittingMargin
     ) -> SceneCamera {
         var distance: Float = 0
         let t = tan(verticalFOV / 2)

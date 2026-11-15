@@ -115,6 +115,19 @@ enum TurntableTextures {
         return ctx.makeImage()!
     }
 
+    /// A cover as a round label's image: the centre square of the cover, filling a square of `size` pixels.
+    static func coverLabel(_ cover: CGImage, size: Int) -> CGImage {
+        let ctx = context(width: size, height: size)
+        let scale = CGFloat(size) / CGFloat(min(cover.width, cover.height))
+        let width = CGFloat(cover.width) * scale
+        let height = CGFloat(cover.height) * scale
+        ctx.interpolationQuality = .high
+        ctx.draw(cover, in: CGRect(
+            x: (CGFloat(size) - width) / 2, y: (CGFloat(size) - height) / 2, width: width, height: height
+        ))
+        return ctx.makeImage()!
+    }
+
     private static func draw(_ text: String, at centre: CGPoint, size: CGFloat, weight: NSFont.Weight) {
         let string = NSAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: size, weight: weight),

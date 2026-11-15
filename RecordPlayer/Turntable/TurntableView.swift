@@ -44,12 +44,6 @@ struct TurntableView: View {
             .onChange(of: cameraView) { scene?.show(cameraView, in: proxy.size) }
             .onChange(of: adjustedPoses) { scene?.adjustedPoses = adjustedPoses }
             .onChange(of: proxy.size) { scene?.show(cameraView, in: proxy.size) }
-            .overlay(alignment: .bottom) {
-                TrackInfoLine(model: model)
-                    .padding(.horizontal, 28)
-                    .frame(height: 34)
-                    .allowsHitTesting(false)
-            }
         }
         .background(.black)
         .ignoresSafeArea()

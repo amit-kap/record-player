@@ -1,8 +1,60 @@
+import CoreGraphics
 import Foundation
+
+/// A cover image that loads when asked. Local files and Apple Music both fit: the image comes from `load`,
+/// which may fetch it over the network. Two artworks are equal when their ids are.
+struct Artwork: Sendable, Equatable {
+    /// Stable for the same picture, so the cache can recognise it.
+    let id: String
+    private let load: @Sendable (_ pixels: Int) async -> CGImage?
+
+    /// `load` returns the cover as a square of about `pixels` on a side, or nil when it cannot.
+    init(id: String, load: @escaping @Sendable (_ pixels: Int) async -> CGImage?) {
+        self.id = id
+        self.load = load
+    }
+
+    /// The cover at about `pixels` on a side. Each id and size is loaded once.
+    func image(pixels: Int) async -> CGImage? {
+        await ArtworkCache.shared.image(for: self, pixels: pixels)
+    }
+
+    static func == (lhs: Artwork, rhs: Artwork) -> Bool { lhs.id == rhs.id }
+
+    fileprivate func loadUncached(pixels: Int) async -> CGImage? { await load(pixels) }
+}
+
+/// Keeps decoded covers, so changing tracks back and forth does not decode them again.
+private actor ArtworkCache {
+    static let shared = ArtworkCache()
+
+    private struct Key: Hashable {
+        let id: String
+        let pixels: Int
+    }
+
+    private var images: [Key: CGImage] = [:]
+    private var loading: [Key: Task<CGImage?, Never>] = [:]
+
+    func image(for artwork: Artwork, pixels: Int) async -> CGImage? {
+        let key = Key(id: artwork.id, pixels: pixels)
+        if let cached = images[key] { return cached }
+        if let running = loading[key] { return await running.value }
+        let task = Task { await artwork.loadUncached(pixels: pixels) }
+        loading[key] = task
+        let image = await task.value
+        loading[key] = nil
+        if let image { images[key] = image }
+        return image
+    }
+}
 
 struct RecordTrack: Sendable, Equatable {
     var title: String
     var artist: String
+    var album: String
+    /// Nil when the track has no cover of its own; the record's is used then.
+    var artwork: Artwork?
     /// Seconds.
     var duration: Double
 }
@@ -11,6 +63,7 @@ struct RecordTrack: Sendable, Equatable {
 struct Record: Sendable, Equatable {
     var title: String
     var artist: String
+    var artwork: Artwork?
     var tracks: [RecordTrack]
 }
 

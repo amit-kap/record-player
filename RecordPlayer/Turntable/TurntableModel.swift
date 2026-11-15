@@ -56,10 +56,21 @@ final class TurntableModel {
         (isNeedleDown && isMotorOn) || (isDragging && geometry.isOverRecord(swing: targetSwing))
     }
 
+    /// The needle is down and the platter turns.
+    var isPlaying: Bool { isNeedleDown && isMotorOn }
+
     /// The track under the needle, or nil on a silent turntable or with the arm at rest.
     var nowPlaying: RecordTrack? {
         guard isNeedleDown, let tracks = record?.tracks, tracks.indices.contains(currentTrack) else { return nil }
         return tracks[currentTrack]
+    }
+
+    /// The cover of the track under the needle (or the last one played), else the record's. Nil with no record.
+    /// It changes in the same update as `nowPlaying`.
+    var nowPlayingArtwork: Artwork? {
+        guard let record else { return nil }
+        let tracks = record.tracks
+        return (tracks.indices.contains(currentTrack) ? tracks[currentTrack].artwork : nil) ?? record.artwork
     }
 
     // MARK: Tonearm

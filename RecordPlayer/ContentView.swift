@@ -6,10 +6,36 @@ struct ContentView: View {
     @State private var cameraView: TurntableCameraView = .top
     @State private var adjustedPoses: [TurntableCameraView: CameraPose] = [:]
     @State private var isAdjustingCamera = false
+    /// Whether the panel shows: the saved choice, or a launch flag's for that launch only. Plain state rather than
+    /// `@AppStorage`, so a toggle's animation reaches the panel's transition.
+    @State private var isHUDShown = ContentView.hudFlag
+        ?? UserDefaults.standard.object(forKey: ContentView.hudKey) as? Bool ?? true
+    @State private var pointer = PointerActivity()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TurntableView(model: turntable, cameraView: cameraView, adjustedPoses: adjustedPoses)
+        HUDFramedTurntable(
+            model: turntable, cameraView: cameraView, adjustedPoses: adjustedPoses, room: isHUDShown ? 1 : 0
+        )
+            // With reduced motion the deck moves at once, while the panel only fades.
+            .animation(reduceMotion ? nil : Self.hudMotion, value: isHUDShown)
             .frame(minWidth: 800, minHeight: 500)
+            .overlay(alignment: .bottom) {
+                if isHUDShown {
+                    HUDPanel(model: turntable, cameraView: $cameraView, hide: toggleHUD)
+                        .padding([.horizontal, .bottom], HUDPanel.inset)
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !isHUDShown {
+                    HUDShowButton(pointer: pointer, show: toggleHUD)
+                        .padding(HUDPanel.inset)
+                        .transition(.opacity)
+                }
+            }
+            .onContinuousHover { _ in pointer.moved() }
+            .onAppear { pointer.moved() }
             .overlay(alignment: .topTrailing) {
                 if isAdjustingCamera {
                     CameraAdjustPanel(
@@ -67,6 +93,28 @@ struct ContentView: View {
         #endif
     }
 
+    /// The panel and the deck move with this one curve, so they arrive together.
+    private static let hudMotion = Animation.easeOut(duration: 0.3)
+
+    private static let hudKey = "hudShown"
+
+    /// `--hud` and `--no-hud` show or hide the HUD for one launch, for checking both on screen.
+    private static var hudFlag: Bool? {
+        #if DEBUG
+        if CommandLine.arguments.contains("--no-hud") { return false }
+        if CommandLine.arguments.contains("--hud") { return true }
+        #endif
+        return nil
+    }
+
+    /// A toggle is the user's choice, so it is saved.
+    private func toggleHUD() {
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : Self.hudMotion) { isHUDShown.toggle() }
+        UserDefaults.standard.set(isHUDShown, forKey: Self.hudKey)
+        // The button that brings it back shows for a moment, even when the pointer is elsewhere.
+        pointer.moved()
+    }
+
     /// The buttons live on the turntable itself; these give them keys and VoiceOver names.
     private var keyboardShortcuts: some View {
         Group {
@@ -76,6 +124,8 @@ struct ContentView: View {
                 .keyboardShortcut(.leftArrow, modifiers: [])
             Button("Next track") { turntable.nextTrack() }
                 .keyboardShortcut(.rightArrow, modifiers: [])
+            Button("Show or hide controls") { toggleHUD() }
+                .keyboardShortcut("h", modifiers: [])
             Button("Adjust camera") { withAnimation(.easeOut(duration: 0.15)) { isAdjustingCamera.toggle() } }
                 .keyboardShortcut("a", modifiers: [])
             ForEach(Array(TurntableCameraView.allCases.enumerated()), id: \.element) { index, view in

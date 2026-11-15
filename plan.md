@@ -47,7 +47,22 @@ Total: 27 working days. Milestones 4 and 5 were added on 2026-11-13, when Amit m
 - **Repo:** local git on `main`. A GitHub repo is created when Amit asks; its link goes in `repo:` in `concept.md`.
 
 ## Status
-Current milestone: M4, built, waiting for Amit's hands-on check (2026-11-13). M3 was tried by Amit and adjusted (stop returns the arm home, calmer strobe dots). M1 is not started and is blocked on the Apple Developer membership.
+Current milestone: M5, built, waiting for Amit's hands-on check (2026-11-15). M4 is built and also waits for his hands-on check (2026-11-13). M3 was tried by Amit and adjusted (stop returns the arm home, calmer strobe dots). M1 is not started and is blocked on the Apple Developer membership.
+
+M5 so far (built by Sonnet and Opus agents, each task reviewed and re-run by the supervising session; not committed):
+- Done: every track carries its album and its cover (`Artwork`: an id and an image that loads when asked, so Apple Music covers fit later). The model gives the current song's cover.
+- Test record: the three MP3s have no album tag and no embedded cover, so each gets a generated cover in its own colour with the title on it.
+- Done: the label shows the current song's cover, cropped to the disc, with a 0.3-second crossfade. Covers for the current, next and previous tracks are built ahead of time. Renders: `docs/m5-label-top.png`, `docs/m5-label-side.png`, `docs/m5-label-tonearm.png`.
+- Label glow: the old glow added a flat grey that washed covers out. It is now an unlit copy of the label over the lit one, so colours stay true. The placeholder label is slightly darker than before.
+- Done: the HUD, one floating panel at the bottom: cover, title, artist and album, elapsed and length, previous, play/pause, next, and a Top / Side / Tonearm switch. It replaces the old track line. Screenshots: `docs/m5-hud.png`, `docs/m5-hud-800x500.png`, `docs/m5-hud-hidden.png`.
+- Show and hide: key H, the panel's chevron, or a small round button in the bottom-right corner while hidden (it fades when the pointer rests). The choice is remembered.
+- While the HUD shows, the deck zooms out a little and moves up, so the panel never covers the plinth, even at 800 × 500. The deck and the panel move together in 0.3 seconds.
+- Debug flags: `--hud` and `--no-hud` for one launch; `--snapshot` takes `--track N`.
+- Checked: 39 unit tests pass; the playback check passes and now exits non-zero on failure. Label swap after a track change: 0.32 to 0.38 seconds over 13 runs (limit 1 second). A cover never seen before: 0.43 to 0.74 seconds.
+- Checked: HUD at 1280 × 800 and 800 × 500, shown and hidden; show/hide and a view change measured from screen recordings.
+- Sent back during review: two test covers had the same colour; the first cover of a record was too close to the 1-second limit; the panel was not animating and the debug flags overwrote the saved choice.
+- Not checked: clicking the HUD buttons and dragging the tonearm with a real pointer while the HUD shows; the corner button's fade; VoiceOver and Reduce Motion; 60 fps during a label swap; the Xcode project build.
+- Open risk for M1: an Apple Music cover comes over the network. The next track's cover is fetched ahead, but the first cover of a newly picked record may take longer than 1 second on a slow connection.
 
 M4 so far:
 - Done: three camera views with a 0.9-second glide between them; keys 1, 2 and 3 switch. Renders: `docs/m4-side.png`, `docs/m4-tonearm.png`.

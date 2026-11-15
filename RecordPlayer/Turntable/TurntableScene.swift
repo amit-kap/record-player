@@ -44,6 +44,32 @@ final class TurntableScene {
     /// How far the dots appear to have turned. Under the strobe lamp they slow to a standstill at full speed.
     private var strobeDotsAngle: Float = 0
 
+    /// The label as printed now, and a copy just above it that fades a new one in.
+    private let label: LabelDisc
+    private let incomingLabel: LabelDisc
+    private var incomingTexture: TextureResource
+    private let placeholderLabel: TextureResource
+    /// The artwork the label shows or is changing to. Nil is the placeholder.
+    private var labelArtwork: Artwork?
+    /// Counts label changes, so a cover that finishes loading after a newer change is dropped.
+    private var labelRequest = 0
+    /// 0...1 while the incoming label fades in; nil when it is not showing.
+    private var labelFade: Float?
+    private var incomingArtworkID: String?
+    /// The id of the artwork the label shows in full, nil for the placeholder. Debug checks read it.
+    private(set) var shownArtworkID: String?
+    /// Label textures ready to show, by artwork id, least recently used first. A cover that could not be loaded
+    /// is kept as the placeholder.
+    private var labelTextures: [(id: String, texture: TextureResource)] = []
+    /// Label textures being built, by artwork id.
+    private var labelLoads: [String: Task<TextureResource, Never>] = [:]
+    /// How many label textures are kept: the tracks around the current one and a few just played.
+    private static let labelCacheSize = 5
+    /// Label images are this many pixels on a side: sharp in the close-up view, with mipmaps for the spin.
+    private static let labelPixels = 2048
+    /// How long one label takes to fade into the next, in seconds.
+    private static let labelFadeTime: Float = 0.3
+
     static let verticalFOV: Float = 20 * .pi / 180
     /// How long a change of view takes, in seconds.
     private static let viewChangeTime: Float = 0.9
@@ -62,6 +88,14 @@ final class TurntableScene {
         self.sceneCamera = SceneCamera.fitting(
             spec.pose(for: .top).framing, in: CGSize(width: 1280, height: 800), verticalFOV: Self.verticalFOV
         )
+        let placeholder = try await TextureResource(
+            image: TurntableTextures.placeholderLabel(), options: Self.labelTextureOptions
+        )
+        self.placeholderLabel = placeholder
+        self.incomingTexture = placeholder
+        let labelMesh = try TurntableMeshes.disc(radius: spec.labelRadius)
+        self.label = LabelDisc(mesh: labelMesh, glow: theme.labelGlow)
+        self.incomingLabel = LabelDisc(mesh: labelMesh, glow: theme.labelGlow)
 
         buildGround()
         try await loadModel()
@@ -176,6 +210,117 @@ final class TurntableScene {
         spinning.setOrientation(turn * spinBase, relativeTo: root)
         poseStrobeDots(deltaTime: dt)
         record.orientation = turn
+
+        let artwork = model.nowPlayingArtwork
+        if artwork != labelArtwork { changeLabel(to: artwork) }
+        prewarmLabels(for: model)
+        advanceLabelFade(by: dt)
+    }
+
+    // MARK: Label
+
+    private static var labelTextureOptions: TextureResource.CreateOptions {
+        TextureResource.CreateOptions(semantic: .color, mipmapsMode: .allocateAndGenerateAll)
+    }
+
+    /// Fades in the new cover: at once when its texture is ready, otherwise once it has loaded.
+    /// Nil fades back to the placeholder.
+    private func changeLabel(to artwork: Artwork?) {
+        labelArtwork = artwork
+        labelRequest += 1
+        let request = labelRequest
+        guard let artwork else {
+            fadeLabel(to: placeholderLabel, id: nil)
+            return
+        }
+        if let ready = readyLabel(for: artwork.id) {
+            fadeLabel(to: ready, artwork: artwork)
+            return
+        }
+        let load = loadLabel(artwork)
+        Task {
+            let texture = await load.value
+            guard request == labelRequest else { return }
+            fadeLabel(to: texture, artwork: artwork)
+        }
+    }
+
+    /// A cover that could not be loaded leaves the placeholder.
+    private func fadeLabel(to texture: TextureResource, artwork: Artwork) {
+        fadeLabel(to: texture, id: texture === placeholderLabel ? nil : artwork.id)
+    }
+
+    /// Builds label textures ahead of time, one at a time: the current track's cover, then the next and the
+    /// previous one, so a track change only has to fade.
+    private func prewarmLabels(for model: TurntableModel) {
+        guard labelLoads.isEmpty, let tracks = model.record?.tracks else { return }
+        let neighbours = [model.currentTrack + 1, model.currentTrack - 1].filter(tracks.indices.contains)
+        let wanted = [model.nowPlayingArtwork] + neighbours.map { tracks[$0].artwork ?? model.record?.artwork }
+        for case let artwork? in wanted where !labelTextures.contains(where: { $0.id == artwork.id }) {
+            _ = loadLabel(artwork)
+            return
+        }
+    }
+
+    /// The ready texture for an artwork id, marked as just used.
+    private func readyLabel(for id: String) -> TextureResource? {
+        guard let index = labelTextures.firstIndex(where: { $0.id == id }) else { return nil }
+        let entry = labelTextures.remove(at: index)
+        labelTextures.append(entry)
+        return entry.texture
+    }
+
+    /// Builds the label texture for a cover and keeps it, or joins the build already running for it.
+    private func loadLabel(_ artwork: Artwork) -> Task<TextureResource, Never> {
+        if let running = labelLoads[artwork.id] { return running }
+        let task = Task {
+            var texture = placeholderLabel
+            if let image = await Self.labelImage(for: artwork, pixels: Self.labelPixels),
+               let built = try? await TextureResource(image: image, options: Self.labelTextureOptions) {
+                texture = built
+            }
+            labelLoads[artwork.id] = nil
+            labelTextures.removeAll { $0.id == artwork.id }
+            labelTextures.append((artwork.id, texture))
+            if labelTextures.count > Self.labelCacheSize { labelTextures.removeFirst() }
+            return texture
+        }
+        labelLoads[artwork.id] = task
+        return task
+    }
+
+    /// Decodes and crops the cover away from the main actor.
+    private nonisolated static func labelImage(for artwork: Artwork, pixels: Int) async -> CGImage? {
+        guard let cover = await artwork.image(pixels: pixels) else { return nil }
+        return TurntableTextures.coverLabel(cover, size: pixels)
+    }
+
+    private func fadeLabel(to texture: TextureResource, id: String?) {
+        // A fade still running is cut short: its label becomes the printed one.
+        if labelFade != nil {
+            label.show(incomingTexture)
+            shownArtworkID = incomingArtworkID
+        }
+        incomingLabel.show(texture)
+        incomingLabel.entity.components.set(OpacityComponent(opacity: 0))
+        incomingLabel.entity.isEnabled = true
+        incomingTexture = texture
+        incomingArtworkID = id
+        labelFade = 0
+    }
+
+    private func advanceLabelFade(by dt: Float) {
+        guard var fade = labelFade else { return }
+        fade = min(1, fade + dt / Self.labelFadeTime)
+        if fade < 1 {
+            labelFade = fade
+            incomingLabel.entity.components.set(OpacityComponent(opacity: fade * fade * (3 - 2 * fade)))
+            return
+        }
+        label.show(incomingTexture)
+        incomingLabel.entity.isEnabled = false
+        labelFade = nil
+        shownArtworkID = incomingArtworkID
     }
 
     /// On a real deck the strobe lamp flashes in step with the dots, so at the right speed they look frozen.
@@ -290,19 +435,13 @@ final class TurntableScene {
         surface.position.y = spec.recordTop + 0.0002
         record.addChild(surface)
 
-        let labelTexture = try await TextureResource(
-            image: TurntableTextures.placeholderLabel(),
-            options: .init(semantic: .color)
-        )
-        var paper = PhysicallyBasedMaterial()
-        paper.baseColor = .init(tint: .white, texture: .init(labelTexture))
-        paper.roughness = 0.7
-        paper.metallic = 0.0
-        paper.emissiveColor = .init(color: .white, texture: .init(labelTexture))
-        paper.emissiveIntensity = theme.labelGlow
-        let label = ModelEntity(mesh: try TurntableMeshes.disc(radius: labelRadius), materials: [paper])
-        label.position.y = spec.recordTop + 0.0004
-        record.addChild(label)
+        label.show(placeholderLabel)
+        label.entity.position.y = spec.recordTop + 0.0004
+        record.addChild(label.entity)
+        incomingLabel.entity.position.y = spec.recordTop + 0.0005
+        incomingLabel.entity.components.set(ShadowOpt.none)
+        incomingLabel.entity.isEnabled = false
+        record.addChild(incomingLabel.entity)
 
         // The light streaks do not turn with the record.
         let sheenTexture = try await TextureResource(
@@ -388,6 +527,39 @@ final class TurntableScene {
         )
         entity.position.y = (bottom + top) / 2
         return entity
+    }
+}
+
+/// A record label: printed paper lit by the scene, under an unlit copy that lets the print glow a little by itself,
+/// so the artwork stays vivid in a dark scene.
+@MainActor
+private final class LabelDisc {
+    let entity = Entity()
+    private let paper: ModelEntity
+    private let glow: ModelEntity
+    /// How much of the unlit copy shows through, 0...1.
+    private let glowStrength: Float
+
+    init(mesh: MeshResource, glow strength: Float) {
+        paper = ModelEntity(mesh: mesh)
+        glow = ModelEntity(mesh: mesh)
+        glowStrength = strength
+        glow.position.y = 0.00005
+        glow.components.set(ShadowOpt.none)
+        entity.addChild(paper)
+        entity.addChild(glow)
+    }
+
+    func show(_ texture: TextureResource) {
+        var print = PhysicallyBasedMaterial()
+        print.baseColor = .init(tint: .white, texture: .init(texture))
+        print.roughness = 0.7
+        print.metallic = 0.0
+        paper.model?.materials = [print]
+        var light = UnlitMaterial()
+        light.color = .init(tint: .white, texture: .init(texture))
+        light.blending = .transparent(opacity: .init(floatLiteral: glowStrength))
+        glow.model?.materials = [light]
     }
 }
 
