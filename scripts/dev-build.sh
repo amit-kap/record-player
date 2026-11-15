@@ -23,6 +23,12 @@ if [ -d RecordPlayer/Resources ]; then
   find RecordPlayer/Resources -maxdepth 1 -type f -exec cp {} "$APP/Contents/Resources/" \;
 fi
 
+# Debug builds carry the test record, so the turntable plays music before Apple Music is wired in.
+if ls ref/royality-free-music/*.mp3 >/dev/null 2>&1; then
+  mkdir -p "$APP/Contents/Resources/TestRecord"
+  cp ref/royality-free-music/*.mp3 "$APP/Contents/Resources/TestRecord/"
+fi
+
 cat > "$APP/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

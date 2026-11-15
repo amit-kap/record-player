@@ -9,12 +9,16 @@ import UniformTypeIdentifiers
 
 /// Debug only: renders the turntable to a PNG without a window, so the look can be checked from the command line.
 ///
-///     RecordPlayer --snapshot out.png [--size 1280x800] [--inset 296] [--play] [--swing 0.4]
+///     RecordPlayer --snapshot out.png [--size 1280x800] [--view top|side|tonearm] [--play] [--swing 0.4] [--frames 300]
 @MainActor
 enum TurntableSnapshot {
     /// Renders and returns true when the launch arguments ask for a snapshot.
     static func runIfRequested() async -> Bool {
         let arguments = CommandLine.arguments
+        if arguments.contains("--playback-check") {
+            await playbackCheck()
+            return true
+        }
         guard let flag = arguments.firstIndex(of: "--snapshot"), arguments.count > flag + 1 else {
             return false
         }
@@ -29,7 +33,7 @@ enum TurntableSnapshot {
                 to: URL(fileURLWithPath: arguments[flag + 1]),
                 width: width,
                 height: height,
-                inset: value(after: "--inset", in: arguments).flatMap(Double.init) ?? 0,
+                view: value(after: "--view", in: arguments).flatMap(TurntableCameraView.init(rawValue:)) ?? .top,
                 play: arguments.contains("--play"),
                 swing: value(after: "--swing", in: arguments).flatMap(Float.init)
             )
@@ -39,18 +43,87 @@ enum TurntableSnapshot {
         return true
     }
 
+    /// Plays the test record muted and prints what the turntable does, step by step.
+    private static func playbackCheck() async {
+        guard let playback = LocalPlayback.testRecord() else {
+            print("no test record")
+            return
+        }
+        playback.isMuted = true
+        let model = TurntableModel(playback: playback)
+        guard let scene = try? await TurntableScene(
+            spec: model.spec, theme: .dark, trackStarts: model.trackStarts
+        ) else {
+            print("no scene")
+            return
+        }
+        func run(_ seconds: Double, _ label: String) async {
+            for _ in 0..<Int(seconds * 60) {
+                scene.update(deltaTime: 1.0 / 60, model: model)
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            let progress = model.geometry.progress(swing: scene.currentSwing)
+            let expected = model.layout.progress(track: playback.trackIndex, time: playback.time)
+            print(String(
+                format: "%@: track %d, %d s, sounding %d, motor %d, needle %d, arm %.4f, music %.4f, title %@",
+                label, model.currentTrack, model.elapsedSeconds, playback.isPlaying ? 1 : 0,
+                model.isMotorOn ? 1 : 0, model.isNeedleDown ? 1 : 0, progress, expected,
+                model.nowPlaying?.title ?? "-"
+            ))
+        }
+        print("tracks:", model.record?.tracks.map { "\($0.title) / \($0.artist) / \(Int($0.duration)) s" } ?? [])
+        print("starts:", model.trackStarts)
+        await run(0.5, "at rest")
+        model.togglePlay()
+        await run(4, "start pressed")
+        model.nextTrack()
+        await run(3, "next")
+        model.nextTrack()
+        await run(3, "next")
+        model.nextTrack()
+        await run(1, "next on last track")
+        model.previousTrack()
+        await run(3, "previous, early in track")
+        await run(2, "keeps playing")
+        model.previousTrack()
+        await run(3, "previous, 4 s in")
+        model.togglePlay()
+        await run(2, "pause pressed")
+        model.togglePlay()
+        await run(2, "play pressed")
+        model.startStop()
+        await run(2, "stop button")
+        model.startStop()
+        await run(3, "start button")
+        // Carry the arm to the middle of the record and drop it.
+        let grab = model.geometry.pivot + model.geometry.armDirection(swing: scene.currentSwing) * 0.2
+        if model.beginDrag(at: grab, currentSwing: scene.currentSwing) {
+            await run(0.5, "arm lifted")
+            let swing = model.geometry.swing(forProgress: 0.5)
+            model.drag(to: model.geometry.pivot + model.geometry.armDirection(swing: swing) * 0.2)
+            model.endDrag()
+        }
+        await run(3, "dropped at 0.5")
+        if model.beginDrag(at: model.geometry.pivot + model.geometry.armDirection(swing: scene.currentSwing) * 0.2, currentSwing: scene.currentSwing) {
+            let swing = model.geometry.swing(forProgress: 0.9985)
+            model.drag(to: model.geometry.pivot + model.geometry.armDirection(swing: swing) * 0.2)
+            model.endDrag()
+        }
+        await run(1.5, "dropped near the end")
+        await run(2, "after the record ends")
+    }
+
     private static func value(after flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.count > index + 1 else { return nil }
         return arguments[index + 1]
     }
 
     static func render(
-        to url: URL, width: Int, height: Int, inset: Double, play: Bool, swing: Float?
+        to url: URL, width: Int, height: Int, view: TurntableCameraView, play: Bool, swing: Float?
     ) async throws {
         let model = TurntableModel()
-        let scene = try await TurntableScene(geometry: model.geometry, theme: .dark)
-        let size = CGSize(width: width, height: height)
-        scene.place(camera: TurntableScene.camera(for: size, trailingInset: inset))
+        let scene = try await TurntableScene(spec: model.spec, theme: .dark, trackStarts: model.trackStarts)
+        scene.show(view, in: CGSize(width: width, height: height), animated: false)
 
         if let swing {
             // Carry the arm to the requested swing and let go.
@@ -62,7 +135,8 @@ enum TurntableSnapshot {
         } else if play {
             model.togglePlay()
         }
-        for _ in 0..<300 {
+        let frames = value(after: "--frames", in: CommandLine.arguments).flatMap(Int.init) ?? 300
+        for _ in 0..<frames {
             scene.update(deltaTime: 1.0 / 60, model: model)
         }
 
