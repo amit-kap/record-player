@@ -47,7 +47,20 @@ Total: 27 working days. Milestones 4 and 5 were added on 2026-11-13, when Amit m
 - **Repo:** local git on `main`. A GitHub repo is created when Amit asks; its link goes in `repo:` in `concept.md`.
 
 ## Status
-Current milestone: M5, built, waiting for Amit's hands-on check (2026-11-15). M4 is built and also waits for his hands-on check (2026-11-13). M3 was tried by Amit and adjusted (stop returns the arm home, calmer strobe dots). M1 is not started and is blocked on the Apple Developer membership.
+Current milestone: M7, built without the picker, waiting for Amit's hands-on check (2026-11-16). M5 and M4 are built and also wait for his hands-on check. M6 (the picker) and M1 are not started; both need Apple Music, which is blocked on the Apple Developer membership. M3 was tried by Amit and adjusted (stop returns the arm home).
+
+M7 so far (2026-11-16; Amit chose "record change only", no picker yet; built by a Sonnet agent, reviewed and re-run by the supervising session; not committed):
+- Done: a record can change while the app runs. The arm goes home and the platter brakes, the old record lifts off and fades, the new one drops on with its cover on the label, and the old sound stops. A full change took 1.8 seconds in the check.
+- Done: an empty platter. The panel says "No record on the platter", the transport is off, and Load record is the one lit action.
+- Done: the last record loaded by hand is restored on launch, with no animation. A first launch loads the first test record.
+- Load record opens a short list of three stand-in records cut from the test MP3s ("Test record", "Side B", "Single"), with Remove record. It stands in for the Apple Music picker (M6).
+- The player interface gained `load(_:)`, and `Record` an id, so Apple Music fits later. The change's timing is pure logic in TurntableCore (`RecordChange`).
+- Debug flags: `--empty`, `--records`, and `--snapshot ... --change lifting|dropping --progress x`.
+- Renders: `docs/m7-change-lift-*.png`, `docs/m7-change-drop-*.png`, `docs/m7-empty-*.png`, `docs/m7-hud-empty.png`, `docs/m7-hud-load.png`.
+- Checked: 46 unit tests pass; the playback check passes with 16 new record-change checks; stills of the lift, the drop and the empty platter.
+- Not checked: how the motion feels in the running app, 60 fps during a change, clicks on the list with a real pointer, the fading record's shadow, the Xcode project build.
+- Not done: error states (criterion 17). They need Apple Music.
+- Release builds have no player yet, so they would start with an empty platter.
 
 Lighting rework (2026-11-15, after Amit's review; Sonnet agents did the research and the textures, the supervising session did the scene; not committed):
 - The deck is lit like a studio product shot: an HDR studio of soft panels drawn in code (a softbox behind, a warm strip on the key side, a cool strip behind), one warm key lamp for the shadows, and a cool rim lamp from behind. All of it is data in `TurntableTheme`.

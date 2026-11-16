@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var turntable = TurntableModel(playback: ContentView.playback())
+    @State private var turntable = Launch.setup.model
+    /// The records that can be loaded.
+    private let records = Launch.setup.records
     @State private var mediaKeys = MediaKeys()
     @State private var cameraView: TurntableCameraView = .top
     @State private var adjustedPoses: [TurntableCameraView: CameraPose] = [:]
@@ -24,7 +26,7 @@ struct ContentView: View {
             .frame(minWidth: HUDLayout.minimumSize.width, minHeight: HUDLayout.minimumSize.height)
             .overlay(alignment: .trailing) {
                 if isPlaybackShown {
-                    HUDDetailPanel(model: turntable, hide: togglePlayback)
+                    HUDDetailPanel(model: turntable, records: records, choose: load, hide: togglePlayback)
                         .padding(HUDLayout.inset)
                         // Up into the title bar's space: the panel runs the window's full height.
                         .ignoresSafeArea()
@@ -109,16 +111,10 @@ struct ContentView: View {
         #endif
     }
 
-    /// Until Apple Music is wired in, debug builds play the bundled test record.
-    private static func playback() -> RecordPlayback? {
-        #if DEBUG
-        if CommandLine.arguments.contains("--snapshot") { return nil }
-        let playback = LocalPlayback.testRecord()
-        playback?.isMuted = CommandLine.arguments.contains("--mute")
-        return playback
-        #else
-        return nil
-        #endif
+    /// Loading a record by hand is the user's choice, so it is saved.
+    private func load(_ record: Record?) {
+        turntable.load(record)
+        LastRecord.save(record)
     }
 
     /// The panels and the deck move with this one curve, so they arrive together.
@@ -172,4 +168,23 @@ struct ContentView: View {
         }
         .opacity(0)
     }
+}
+
+/// What the app starts with. Until Apple Music is wired in, debug builds play the bundled test records.
+@MainActor
+private enum Launch {
+    static let setup: (model: TurntableModel, records: [Record]) = {
+        #if DEBUG
+        // A snapshot renders its own scene; the app never plays for it.
+        guard !CommandLine.arguments.contains("--snapshot"), let library = LocalPlayback.testLibrary() else {
+            return (TurntableModel(), [])
+        }
+        library.playback.isMuted = CommandLine.arguments.contains("--mute")
+        let first = LastRecord.initial(from: library.records, preferred: library.preferred)
+        library.playback.load(first)
+        return (TurntableModel(playback: library.playback, record: first), library.records)
+        #else
+        return (TurntableModel(), [])
+        #endif
+    }()
 }

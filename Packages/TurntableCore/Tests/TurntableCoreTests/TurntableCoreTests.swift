@@ -404,3 +404,70 @@ struct LeavingRoomTests {
         #expect(centre.x > size.width / 2)
     }
 }
+
+@Suite("RecordChange")
+struct RecordChangeTests {
+    private func step(_ change: inout RecordChange, home: Bool = true, stopped: Bool = true, ready: Bool = true,
+                      dt: Float = 0.1) -> RecordChange.Events {
+        change.advance(by: dt, armIsHome: home, platterIsStopped: stopped, incomingIsReady: ready)
+    }
+
+    @Test func waitsForTheArmAndThePlatter() {
+        var change = RecordChange(hasOutgoing: true, hasIncoming: true)
+        for _ in 0..<20 {
+            #expect(step(&change, home: false) == [])
+            #expect(step(&change, stopped: false) == [])
+        }
+        #expect(change.phase == .waiting)
+        _ = step(&change)
+        #expect(change.phase == .lifting)
+    }
+
+    @Test func swapsOnceWhenTheOldRecordIsOff() {
+        var change = RecordChange(hasOutgoing: true, hasIncoming: true)
+        var swaps = 0
+        var finished = false
+        var phasesAtSwap: [RecordChange.Phase] = []
+        for _ in 0..<100 {
+            let events = step(&change)
+            if events.contains(.swap) { swaps += 1; phasesAtSwap.append(change.phase) }
+            if events.contains(.finished) { finished = true; break }
+        }
+        #expect(swaps == 1 && finished)
+        #expect(phasesAtSwap == [.dropping])
+    }
+
+    @Test func holdsTheSwapUntilTheIncomingRecordIsReady() {
+        var change = RecordChange(hasOutgoing: true, hasIncoming: true)
+        for _ in 0..<30 { #expect(!step(&change, ready: false).contains(.swap)) }
+        #expect(change.phase == .lifting && change.progress == 1)
+        #expect(step(&change).contains(.swap))
+    }
+
+    @Test func emptyPlatterGetsARecordWithoutLifting() {
+        var change = RecordChange(hasOutgoing: false, hasIncoming: true)
+        #expect(step(&change, ready: false) == [])
+        #expect(step(&change) == .swap)
+        #expect(change.phase == .dropping)
+    }
+
+    @Test func removingARecordEndsAfterTheLift() {
+        var change = RecordChange(hasOutgoing: true, hasIncoming: false)
+        var last: RecordChange.Events = []
+        for _ in 0..<20 where !last.contains(.finished) { last = step(&change) }
+        #expect(last == [.swap, .finished])
+    }
+
+    @Test func easingRunsFromEndToEnd() {
+        #expect(RecordChange.liftEase(0) == 0 && RecordChange.liftEase(1) == 1)
+        #expect(RecordChange.dropHeight(0) == 1)
+        #expect(abs(RecordChange.dropHeight(1)) < 1e-5)
+        var previous: Float = 1
+        for i in 0...80 {
+            let h = RecordChange.dropHeight(Float(i) / 100)
+            #expect(h <= previous + 1e-6)
+            previous = h
+        }
+        for i in 0...100 { #expect(RecordChange.dropHeight(Float(i) / 100) >= 0) }
+    }
+}

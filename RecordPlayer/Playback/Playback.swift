@@ -60,7 +60,9 @@ struct RecordTrack: Sendable, Equatable {
 }
 
 /// What sits on the platter: an album or a playlist.
-struct Record: Sendable, Equatable {
+struct Record: Sendable, Equatable, Identifiable {
+    /// Stable for the same album or playlist, so the last loaded record can be found again.
+    var id: String
     var title: String
     var artist: String
     var artwork: Artwork?
@@ -84,4 +86,6 @@ protocol RecordPlayback: AnyObject {
     func play(track: Int, at time: Double)
     /// Stops the sound and keeps the position.
     func pause()
+    /// Stops the sound and makes `record` the current one, from its first track. Nil empties the player.
+    func load(_ record: Record?)
 }

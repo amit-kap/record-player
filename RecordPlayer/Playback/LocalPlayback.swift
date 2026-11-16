@@ -4,37 +4,76 @@ import CoreText
 import ImageIO
 import TurntableCore
 
-/// Plays a folder of audio files as one record. Used until Apple Music is wired in, and for testing without it.
+/// Plays folders of audio files as records. Used until Apple Music is wired in, and for testing without it.
 @MainActor
 final class LocalPlayback: NSObject, RecordPlayback {
+    /// A record and the files that play it, in track order.
+    struct Source {
+        let record: Record
+        fileprivate let urls: [URL]
+    }
+
     private(set) var record: Record?
     private(set) var trackIndex = 0
     var onRecordEnded: (() -> Void)?
 
-    private let urls: [URL]
+    private var urls: [URL] = []
+    private let sources: [Source]
     private var player: AVAudioPlayer?
     private var pausedTime: Double = 0
     /// Silences the output, for automated checks.
     var isMuted = false
 
-    /// The test record bundled with debug builds, or the folder given with `--record <folder>`.
-    static func testRecord() -> LocalPlayback? {
-        let arguments = CommandLine.arguments
-        if let flag = arguments.firstIndex(of: "--record"), arguments.count > flag + 1 {
-            return LocalPlayback(folder: URL(fileURLWithPath: arguments[flag + 1]), title: "Test record")
-        }
-        guard let folder = Bundle.main.resourceURL?.appendingPathComponent("TestRecord") else { return nil }
-        return LocalPlayback(folder: folder, title: "Test record")
+    /// Plays any of `sources`; `first` is on the platter to begin with.
+    init(sources: [Source], first: Record?) {
+        self.sources = sources
+        super.init()
+        load(first)
     }
 
-    /// Nil when the folder holds no playable audio.
-    init?(folder: URL, title: String) {
+    /// The records of the test library, and the player that plays them. The library is the three files bundled with
+    /// debug builds as "Test record", and two stand-ins cut from the same files so a change can be tried. With
+    /// `--record <folder>` that folder is one more record, and the one to start with.
+    static func testLibrary() -> (playback: LocalPlayback, records: [Record], preferred: Record?)? {
+        var sources: [Source] = []
+        var preferred: Record?
+        let arguments = CommandLine.arguments
+        if let flag = arguments.firstIndex(of: "--record"), arguments.count > flag + 1 {
+            let folder = URL(fileURLWithPath: arguments[flag + 1])
+            if let source = source(id: "local:folder", title: folder.lastPathComponent, urls: files(in: folder)) {
+                sources.append(source)
+                preferred = source.record
+            }
+        }
+        if let folder = Bundle.main.resourceURL?.appendingPathComponent("TestRecord") {
+            let files = files(in: folder)
+            let cuts: [(id: String, title: String, indices: [Int])] = [
+                ("local:test", "Test record", Array(files.indices)),
+                ("local:side-b", "Side B", Array(files.indices.dropFirst().reversed())),
+                ("local:single", "Single", files.count > 1 ? [1] : []),
+            ]
+            for cut in cuts {
+                let urls = cut.indices.map { files[$0] }
+                if let source = source(id: cut.id, title: cut.title, urls: urls) { sources.append(source) }
+            }
+        }
+        guard !sources.isEmpty else { return nil }
+        let records = sources.map(\.record)
+        return (LocalPlayback(sources: sources, first: nil), records, preferred)
+    }
+
+    private static func files(in folder: URL) -> [URL] {
         let extensions: Set<String> = ["mp3", "m4a", "aac", "wav", "aiff", "flac"]
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { extensions.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// Nil when none of the files is playable audio.
+    private static func source(id: String, title: String, urls files: [URL]) -> Source? {
         var urls: [URL] = []
         var tracks: [RecordTrack] = []
-        for url in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
-        where extensions.contains(url.pathExtension.lowercased()) {
+        for url in files {
             guard let probe = try? AVAudioPlayer(contentsOf: url), probe.duration > 0 else { continue }
             let name = Self.name(from: url)
             let tags = Self.tags(of: url)
@@ -46,15 +85,13 @@ final class LocalPlayback: NSObject, RecordPlayback {
             ))
         }
         guard !tracks.isEmpty else { return nil }
-        self.urls = urls
         let artists = Set(tracks.map(\.artist))
-        self.record = Record(
-            title: title,
+        let record = Record(
+            id: id, title: title,
             artist: artists.count == 1 ? tracks[0].artist : "Various artists",
-            artwork: nil,
-            tracks: tracks
+            artwork: nil, tracks: tracks
         )
-        super.init()
+        return Source(record: record, urls: urls)
     }
 
     /// "artist-some-title-123456.mp3" becomes ("Some title", "artist").
@@ -175,6 +212,16 @@ final class LocalPlayback: NSObject, RecordPlayback {
         next.currentTime = min(max(0, time), max(0, next.duration - 0.05))
         next.play()
         player = next
+    }
+
+    func load(_ record: Record?) {
+        player?.stop()
+        player = nil
+        pausedTime = 0
+        trackIndex = 0
+        let source = sources.first { $0.record.id == record?.id }
+        self.record = source?.record
+        urls = source?.urls ?? []
     }
 
     func pause() {

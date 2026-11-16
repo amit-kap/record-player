@@ -21,8 +21,17 @@ final class TurntableScene {
     private let spec: TurntableSpec
     private var geometry: TurntableGeometry { spec.geometry }
     private let theme: TurntableTheme
-    /// Where the gaps between tracks are drawn on the record, 0...1 between the first and last groove.
-    private let trackStarts: [Float]
+    /// Where the gaps between tracks are drawn on the record now, 0...1 between the first and last groove.
+    private var drawnStarts: [Float]
+    /// The grooved surface of the record, whose material is rebuilt when the record changes.
+    private var vinylSurface = ModelEntity()
+    /// The grooves of the record that is coming, once built: at most this and the drawn ones exist.
+    private var preparedVinyl: (starts: [Float], material: PhysicallyBasedMaterial)?
+    /// The grooves being built, for the record that is coming.
+    private var vinylBuild: (starts: [Float], task: Task<Void, Never>)?
+    private var recordOpacity: Float = 1
+    /// The record the label was last set for, to tell a new record from a new song.
+    private var labelRecordID: String?
     private var ground = ModelEntity()
     /// The studio the deck mirrors.
     private let studio = Entity()
@@ -90,7 +99,7 @@ final class TurntableScene {
     init(spec: TurntableSpec, theme: TurntableTheme, trackStarts: [Float]) async throws {
         self.spec = spec
         self.theme = theme
-        self.trackStarts = trackStarts
+        self.drawnStarts = trackStarts
         self.currentSwing = spec.geometry.restSwing
         self.sceneCamera = SceneCamera.fitting(
             spec.pose(for: .top).framing, in: CGSize(width: 1280, height: 800), verticalFOV: Self.verticalFOV
@@ -214,6 +223,7 @@ final class TurntableScene {
         }
         if model.wantsSpin != strobeIsOn { setStrobe(on: model.wantsSpin) }
 
+        platter.spinDownTime = model.change == nil ? PlatterMotion().spinDownTime : RecordChange.brakeTime
         platter.advance(by: dt, spinning: model.wantsSpin)
         // Records turn clockwise seen from above, which is a negative rotation about +y.
         let turn = simd_quatf(angle: -platter.angle, axis: [0, 1, 0])
@@ -221,10 +231,82 @@ final class TurntableScene {
         poseStrobeDots(deltaTime: dt)
         record.orientation = turn
 
+        advanceRecordChange(by: dt, model: model)
         let artwork = model.nowPlayingArtwork
-        if artwork != labelArtwork { changeLabel(to: artwork) }
+        // A new record's cover is on the label the moment it lands; a new song's crossfades.
+        if artwork != labelArtwork || model.record?.id != labelRecordID {
+            changeLabel(to: artwork, instant: model.record?.id != labelRecordID)
+        }
+        labelRecordID = model.record?.id
         prewarmLabels(for: model)
         advanceLabelFade(by: dt)
+    }
+
+    // MARK: Record change
+
+    /// Runs a record change: builds the grooves of the coming record, tells the model when the arm is home and the
+    /// platter has stopped, and moves the record. The model swaps its record when the old one is fully off.
+    private func advanceRecordChange(by dt: Float, model: TurntableModel) {
+        if let starts = model.incomingTrackStarts, model.change != nil { prepareVinyl(for: starts) }
+        let incomingStarts = model.incomingTrackStarts
+        let coverReady = model.incomingArtwork.map { readyLabel(for: $0.id) != nil } ?? true
+        let grooveReady = incomingStarts.map { $0 == drawnStarts || preparedVinyl?.starts == $0 } ?? true
+        model.advanceChange(
+            by: dt,
+            armIsHome: abs(currentSwing - geometry.restSwing) < 0.01 && lift > 0.9,
+            platterIsStopped: platter.speed < RecordChange.stoppedBelow * PlatterMotion.fullSpeed,
+            incomingIsReady: coverReady && grooveReady
+        )
+        if let prepared = preparedVinyl, prepared.starts == model.trackStarts, model.record != nil {
+            vinylSurface.model?.materials = [prepared.material]
+            drawnStarts = prepared.starts
+            preparedVinyl = nil
+        }
+        poseRecord(model)
+    }
+
+    /// Builds the grooves for a record that is coming, once, off the frame loop.
+    private func prepareVinyl(for starts: [Float]) {
+        guard starts != drawnStarts, preparedVinyl?.starts != starts, vinylBuild?.starts != starts else { return }
+        vinylBuild?.task.cancel()
+        let task = Task {
+            guard let material = try? await vinylMaterial(trackStarts: starts), !Task.isCancelled else { return }
+            preparedVinyl = (starts, material)
+            vinylBuild = nil
+        }
+        vinylBuild = (starts, task)
+    }
+
+    /// Puts the record where the change has it: lifting away from the platter, or dropping onto it.
+    private func poseRecord(_ model: TurntableModel) {
+        var height: Float = 0
+        var slide: Float = 0
+        var opacity: Float = 1
+        if let change = model.change {
+            switch change.phase {
+            case .waiting:
+                break
+            case .lifting:
+                let away = RecordChange.liftEase(change.progress)
+                height = away * spec.recordChange.lift
+                slide = away * away * spec.recordChange.slide
+                opacity = 1 - away
+            case .dropping:
+                height = RecordChange.dropHeight(change.progress) * spec.recordChange.dropHeight
+                opacity = min(1, change.progress / 0.3)
+            }
+        }
+        let visible = model.record != nil && opacity > 0.001
+        record.isEnabled = visible
+        guard visible else { return }
+        let direction = spec.recordChange.slideDirection
+        record.position = [
+            geometry.spindle.x + direction.x * slide, height, geometry.spindle.y + direction.y * slide
+        ]
+        if opacity != recordOpacity {
+            record.components.set(OpacityComponent(opacity: opacity))
+            recordOpacity = opacity
+        }
     }
 
     // MARK: Label
@@ -235,16 +317,21 @@ final class TurntableScene {
 
     /// Fades in the new cover: at once when its texture is ready, otherwise once it has loaded.
     /// Nil fades back to the placeholder.
-    private func changeLabel(to artwork: Artwork?) {
+    /// With `instant`, a cover that is ready replaces the label at once, without a fade.
+    private func changeLabel(to artwork: Artwork?, instant: Bool = false) {
         labelArtwork = artwork
         labelRequest += 1
         let request = labelRequest
         guard let artwork else {
-            fadeLabel(to: placeholderLabel, id: nil)
+            if instant { setLabel(placeholderLabel, id: nil) } else { fadeLabel(to: placeholderLabel, id: nil) }
             return
         }
         if let ready = readyLabel(for: artwork.id) {
-            fadeLabel(to: ready, artwork: artwork)
+            if instant {
+                setLabel(ready, id: ready === placeholderLabel ? nil : artwork.id)
+            } else {
+                fadeLabel(to: ready, artwork: artwork)
+            }
             return
         }
         let load = loadLabel(artwork)
@@ -263,9 +350,11 @@ final class TurntableScene {
     /// Builds label textures ahead of time, one at a time: the current track's cover, then the next and the
     /// previous one, so a track change only has to fade.
     private func prewarmLabels(for model: TurntableModel) {
-        guard labelLoads.isEmpty, let tracks = model.record?.tracks else { return }
+        guard labelLoads.isEmpty else { return }
+        let tracks = model.record?.tracks ?? []
         let neighbours = [model.currentTrack + 1, model.currentTrack - 1].filter(tracks.indices.contains)
-        let wanted = [model.nowPlayingArtwork] + neighbours.map { tracks[$0].artwork ?? model.record?.artwork }
+        let wanted = [model.incomingArtwork, model.nowPlayingArtwork]
+            + neighbours.map { tracks[$0].artwork ?? model.record?.artwork }
         for case let artwork? in wanted where !labelTextures.contains(where: { $0.id == artwork.id }) {
             _ = loadLabel(artwork)
             return
@@ -303,6 +392,16 @@ final class TurntableScene {
     private nonisolated static func labelImage(for artwork: Artwork, pixels: Int) async -> CGImage? {
         guard let cover = await artwork.image(pixels: pixels) else { return nil }
         return TurntableTextures.coverLabel(cover, size: pixels)
+    }
+
+    /// Shows a label at once, dropping any fade in progress.
+    private func setLabel(_ texture: TextureResource, id: String?) {
+        label.show(texture)
+        incomingLabel.entity.isEnabled = false
+        incomingTexture = texture
+        incomingArtworkID = id
+        labelFade = nil
+        shownArtworkID = id
     }
 
     private func fadeLabel(to texture: TextureResource, id: String?) {
@@ -479,6 +578,25 @@ final class TurntableScene {
         body.position.y = (spec.platterTop + spec.recordTop) / 2
         record.addChild(body)
 
+        vinylSurface = ModelEntity(
+            mesh: try TurntableMeshes.ring(inner: labelRadius * 0.9, outer: radius),
+            materials: [try await vinylMaterial(trackStarts: drawnStarts)]
+        )
+        vinylSurface.position.y = spec.recordTop + 0.0002
+        record.addChild(vinylSurface)
+
+        label.show(placeholderLabel)
+        label.entity.position.y = spec.recordTop + 0.0004
+        record.addChild(label.entity)
+        incomingLabel.entity.position.y = spec.recordTop + 0.0005
+        incomingLabel.entity.components.set(ShadowOpt.none)
+        incomingLabel.entity.isEnabled = false
+        record.addChild(incomingLabel.entity)
+    }
+
+    /// The grooved surface for a record whose tracks start at `trackStarts`.
+    private func vinylMaterial(trackStarts: [Float]) async throws -> PhysicallyBasedMaterial {
+        let radius = geometry.recordRadius
         let leadIn = CGFloat(geometry.leadInRadius / radius)
         let leadOut = CGFloat(geometry.leadOutRadius / radius)
         let gaps = trackStarts.dropFirst().map { CGFloat($0) }
@@ -502,19 +620,7 @@ final class TurntableScene {
         vinyl.roughness = .init(scale: 1, texture: .init(roughness))
         vinyl.metallic = 0.0
         vinyl.anisotropyLevel = .init(floatLiteral: theme.vinylStreak)
-        let surface = ModelEntity(
-            mesh: try TurntableMeshes.ring(inner: labelRadius * 0.9, outer: radius), materials: [vinyl]
-        )
-        surface.position.y = spec.recordTop + 0.0002
-        record.addChild(surface)
-
-        label.show(placeholderLabel)
-        label.entity.position.y = spec.recordTop + 0.0004
-        record.addChild(label.entity)
-        incomingLabel.entity.position.y = spec.recordTop + 0.0005
-        incomingLabel.entity.components.set(ShadowOpt.none)
-        incomingLabel.entity.isEnabled = false
-        record.addChild(incomingLabel.entity)
+        return vinyl
     }
 
     private func buildLights() {

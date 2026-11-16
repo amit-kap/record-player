@@ -4,9 +4,9 @@ status: develop
 track: personal
 platform: macOS
 interest:
-next: "Amit: set view 3 with the adjust panel (key A) and save; then M5: HUD and song artwork"
+next: "Amit: try the record change (Load record in the panel) and say if the motion is right; then the Apple Developer membership for M1 and M6"
 repo:
-updated: 2026-11-15
+updated: 2026-11-16
 ---
 
 # record-player
@@ -39,3 +39,4 @@ AMIT SAYS (answers on 2026-11-11):
 - 2026-11-13: AMIT SAYS: the side view is `ref/AT-LP140XP/side-view.png`; the third view is a close-up on the tonearm tip that keeps it centre frame while playing, with a depth-of-field blur if possible. Both done; the blur needs macOS 26.
 - 2026-11-13: AMIT SAYS: view 3 still needs adjusting; add the base stands from `side-view.png`; the lighting "feels unclear - i would like to see a more primary prominant source that affects the scence". Added a camera adjust panel (key A) so Amit sets the views himself, larger feet, and one key lamp from the front left with shadows.
 - 2026-11-15: Amit approved the key-lamp lighting ("Yes, keep it").
+- 2026-11-16: AMIT SAYS: "Record change only". M7 is built before the picker: the record change, the empty platter and restoring the last record, with a short list of test records as the stand-in. M6 and M1 wait for the Apple Developer membership.

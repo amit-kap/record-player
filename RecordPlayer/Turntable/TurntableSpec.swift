@@ -59,6 +59,17 @@ struct TurntableSpec: Sendable, Identifiable {
         var partName: String
     }
 
+    /// The path of a record being changed, in metres.
+    struct RecordChangeMotion: Sendable {
+        /// How high the old record rises, and how far it slides sideways as it goes.
+        var lift: Float
+        var slide: Float
+        /// Which way it slides on the table plane (x, z).
+        var slideDirection: SIMD2<Float>
+        /// How high above the platter the new record starts its drop.
+        var dropHeight: Float
+    }
+
     /// One ring of speed-check dots on the platter rim.
     struct StrobeRow: Sendable {
         /// Distance of the dots from the spindle, and their height.
@@ -98,6 +109,8 @@ struct TurntableSpec: Sendable, Identifiable {
     /// Height of the arm's pivot frame with the needle in the groove, and how far it rises when lifted.
     var armPlayingHeight: Float
     var armLiftTravel: Float
+    /// How the record moves when it is changed.
+    var recordChange: RecordChangeMotion
 
     /// Height at which a press is read as being on the arm, and on a button.
     var armGrabHeight: Float
@@ -160,6 +173,7 @@ extension TurntableSpec {
         labelRadius: 0.05,
         armPlayingHeight: 0.040,
         armLiftTravel: 0.010,
+        recordChange: RecordChangeMotion(lift: 0.06, slide: 0.10, slideDirection: [-0.7, -0.7], dropHeight: 0.08),
         armGrabHeight: 0.035,
         buttonHeight: 0.008,
         armGrabDistance: 0.040,  // the tube bows up to 34 mm off the pivot-to-stylus line

@@ -9,10 +9,16 @@ final class TurntableModel {
     /// The record player being shown.
     let spec: TurntableSpec
     var geometry: TurntableGeometry { spec.geometry }
-    /// Makes the sound. Nil means a silent turntable with a placeholder record.
+    /// Makes the sound. Nil means a silent turntable.
     @ObservationIgnored private let playback: RecordPlayback?
-    let record: Record?
-    let layout: RecordLayout
+    /// What sits on the platter. Nil is an empty platter.
+    private(set) var record: Record?
+    private(set) var layout: RecordLayout
+
+    /// A record being swapped, while the change runs. Controls do nothing until it is over.
+    private(set) var change: RecordChange?
+    /// The record that is coming, and how it is laid out, while a change runs.
+    private var incoming: (record: Record?, layout: RecordLayout)?
 
     /// Where the tonearm should be.
     private(set) var targetSwing: Float
@@ -31,6 +37,13 @@ final class TurntableModel {
 
     /// Where each track starts, as 0...1 between the first and last groove.
     var trackStarts: [Float] { layout.trackStarts }
+    /// Where the tracks of the record that is coming start, while a change runs.
+    var incomingTrackStarts: [Float]? { incoming?.record == nil ? nil : incoming?.layout.trackStarts }
+    /// The cover the label will show for the record that is coming: its first song's.
+    var incomingArtwork: Artwork? {
+        guard let record = incoming?.record else { return nil }
+        return record.tracks.first?.artwork ?? record.artwork
+    }
 
     private var dragOffset: Float = 0
     /// The needle is touching the record, as the scene last reported it.
@@ -41,12 +54,13 @@ final class TurntableModel {
     /// Previous restarts the track when it is further in than this, in seconds.
     private let restartThreshold: Double = 3
 
-    init(spec: TurntableSpec = TurntableSpec.all[0], playback: RecordPlayback? = nil) {
+    /// `record` is on the platter to begin with; without one, the player's current record.
+    init(spec: TurntableSpec = TurntableSpec.all[0], playback: RecordPlayback? = nil, record: Record? = nil) {
         self.spec = spec
         self.playback = playback
-        self.record = playback?.record
-        // Without music: five placeholder tracks, so the record still has bands to drop the needle on.
-        self.layout = RecordLayout(durations: playback?.record?.tracks.map(\.duration) ?? [190, 180, 210, 220, 200])
+        let first = record ?? playback?.record
+        self.record = first
+        self.layout = RecordLayout(durations: first?.tracks.map(\.duration) ?? [])
         self.targetSwing = spec.geometry.restSwing
         playback?.onRecordEnded = { [weak self] in self?.recordEnded() }
     }
@@ -58,6 +72,9 @@ final class TurntableModel {
 
     /// The needle is down and the platter turns.
     var isPlaying: Bool { isNeedleDown && isMotorOn }
+
+    /// Controls work only with a record on the platter and no change running.
+    private var isReady: Bool { record != nil && change == nil }
 
     /// The track under the needle, or nil on a silent turntable or with the arm at rest.
     var nowPlaying: RecordTrack? {
@@ -78,7 +95,7 @@ final class TurntableModel {
     /// Starts carrying the tonearm if `point` is on it. Returns false when the press missed the arm.
     func beginDrag(at point: SIMD2<Float>, currentSwing: Float) -> Bool {
         let fromPivot = simd_length(point - geometry.pivot)
-        guard fromPivot > 0.05,
+        guard change == nil, fromPivot > 0.05,
               geometry.distanceToArm(from: point, swing: currentSwing) < spec.armGrabDistance
         else { return false }
         dragOffset = currentSwing - geometry.swing(toward: point)
@@ -98,7 +115,9 @@ final class TurntableModel {
     func endDrag() {
         guard isDragging else { return }
         isDragging = false
-        if geometry.isOverRecord(swing: targetSwing) {
+        if record == nil {
+            returnArm()
+        } else if geometry.isOverRecord(swing: targetSwing) {
             lowerNeedle()
         } else if targetSwing < geometry.leadInSwing {
             // Inside the last groove: settle on the last groove.
@@ -129,7 +148,7 @@ final class TurntableModel {
     /// The start/stop button on the plinth. With the arm at rest it plays from the first groove; with the needle
     /// down it lifts the needle and sends the arm home.
     func startStop() {
-        guard !isDragging else { return }
+        guard !isDragging, isReady else { return }
         if isNeedleDown {
             returnArm()
         } else {
@@ -140,7 +159,7 @@ final class TurntableModel {
     /// Play/pause, for the keyboard and the media keys. With the needle down it stops and starts the platter and
     /// keeps the place; with the arm at rest it plays from the first groove.
     func togglePlay() {
-        guard !isDragging else { return }
+        guard !isDragging, isReady else { return }
         if isNeedleDown {
             isMotorOn.toggle()
         } else {
@@ -150,26 +169,58 @@ final class TurntableModel {
 
     /// Moves the needle to the start of the next track.
     func nextTrack() {
-        guard !isDragging, isNeedleDown, currentTrack + 1 < layout.trackCount else { return }
+        guard !isDragging, isReady, isNeedleDown, currentTrack + 1 < layout.trackCount else { return }
         play(track: currentTrack + 1)
     }
 
     /// Moves the needle back to the start of this track, or of the one before when this one has only just begun.
     func previousTrack() {
-        guard !isDragging, isNeedleDown else { return }
+        guard !isDragging, isReady, isNeedleDown else { return }
         let time = playback.map { $0.trackIndex == currentTrack ? $0.time : 0 } ?? Double(elapsedSeconds)
         play(track: time > restartThreshold ? currentTrack : max(currentTrack - 1, 0))
     }
 
     /// Moves the needle to the start of a track and plays it, from rest too.
     func play(track: Int) {
-        guard !isDragging, (0..<layout.trackCount).contains(track) else { return }
+        guard !isDragging, isReady, (0..<layout.trackCount).contains(track) else { return }
         let start = RecordLayout.Position(track: track, time: 0)
         targetSwing = geometry.swing(forProgress: layout.progress(track: track, time: 0))
         isNeedleDown = true
         isMotorOn = true
         pendingStart = start
         showPosition(start)
+    }
+
+    // MARK: Changing the record
+
+    /// Puts `record` on the platter, or empties it with nil. A record already there is sent off first: the arm goes
+    /// home, the platter stops and the sound ends; then the scene lifts the old record off and drops the new one on.
+    /// Does nothing while a change runs, or for the record that is already there.
+    func load(_ record: Record?) {
+        guard change == nil, !isDragging, record?.id != self.record?.id else { return }
+        playback?.pause()
+        returnArm()
+        incoming = (record, RecordLayout(durations: record?.tracks.map(\.duration) ?? []))
+        change = RecordChange(hasOutgoing: self.record != nil, hasIncoming: record != nil)
+    }
+
+    /// Moves a change on. The scene calls it every frame, because it knows whether the arm is home, whether the
+    /// platter has stopped and whether the incoming record's grooves are built.
+    func advanceChange(by dt: Float, armIsHome: Bool, platterIsStopped: Bool, incomingIsReady: Bool) {
+        guard var running = change, let incoming else { return }
+        let events = running.advance(
+            by: dt, armIsHome: armIsHome, platterIsStopped: platterIsStopped, incomingIsReady: incomingIsReady
+        )
+        change = events.contains(.finished) ? nil : running
+        if events.contains(.swap) {
+            record = incoming.record
+            layout = incoming.layout
+            currentTrack = 0
+            elapsedSeconds = 0
+            pendingStart = nil
+            playback?.load(incoming.record)
+        }
+        if events.contains(.finished) { self.incoming = nil }
     }
 
     private func recordEnded() {
