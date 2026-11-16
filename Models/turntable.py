@@ -347,12 +347,13 @@ def build_plinth():
     box("Plinth", "plinth", table(0, 0), (w, d), -h, 0, bevel=0.004)
     # The round well the platter sits in.
     cylinder("PlatterWell", "well", table(*SPINDLE), PLATTER_RADIUS + 0.005, 0.0, 0.0004, vertices=128)
-    # Four feet, mostly hidden from above.
-    for sx in (-1, 1):
-        for sz in (-1, 1):
-            cylinder(
-                "Foot", "rubber", table(sx * (w / 2 - 0.045), sz * (d / 2 - 0.045)), 0.034, -h - 0.022, -h, bevel=0.003
-            )
+    # Four round feet under the corners: a black collar against the plinth, then a rubber body.
+    for sx, side in ((-1, "L"), (1, "R")):
+        for sz, end in ((1, "F"), (-1, "B")):  # table z toward the viewer is the front
+            # Large and close to the edges, so they show from the three-quarter view like the real deck's.
+            at = table(sx * (w / 2 - 0.048), sz * (d / 2 - 0.048))
+            cylinder("FootCollar" + end + side, "black_metal", at, 0.042, -h - 0.008, -h, vertices=96)
+            cylinder("Foot" + end + side, "rubber", at, 0.037, -h - 0.030, -h - 0.008, bevel=0.003, vertices=96)
 
 
 def build_platter():

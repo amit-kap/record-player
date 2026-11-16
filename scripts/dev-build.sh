@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-OUT=build/dev
+OUT=${OUT:-build/dev}
 APP=$OUT/RecordPlayer.app
 TARGET=arm64-apple-macos15.0
 mkdir -p "$APP/Contents/MacOS"
@@ -21,6 +21,12 @@ find RecordPlayer -name '*.swift' -print0 | xargs -0 swiftc -parse-as-library -s
 if [ -d RecordPlayer/Resources ]; then
   mkdir -p "$APP/Contents/Resources"
   find RecordPlayer/Resources -maxdepth 1 -type f -exec cp {} "$APP/Contents/Resources/" \;
+fi
+
+# Debug builds carry the test record, so the turntable plays music before Apple Music is wired in.
+if ls ref/royality-free-music/*.mp3 >/dev/null 2>&1; then
+  mkdir -p "$APP/Contents/Resources/TestRecord"
+  cp ref/royality-free-music/*.mp3 "$APP/Contents/Resources/TestRecord/"
 fi
 
 cat > "$APP/Contents/Info.plist" <<'EOF'

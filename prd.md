@@ -23,8 +23,11 @@ A Mac app where you pick an album or playlist from Apple Music, it drops onto a 
 - Apple Music sign-in and playback of full tracks.
 - A record is an album or a playlist.
 - Record picker: library albums and playlists, plus catalog search.
-- Real-time 3D turntable that mimics a real record player, top view, built in code: plinth, platter with strobe dots, record, label, tonearm, buttons, status light.
-- Artwork on the record label.
+- Real-time 3D turntable that mimics a real record player: plinth, platter with strobe dots, record, label, tonearm, buttons, status light.
+- Camera views (added 2026-11-13): the user switches between 3 to 4 good-looking angles: top, side at 45 degrees, and a close-up on the tonearm.
+- One turntable model, with the code prepared for more (2026-11-13): everything specific to a deck sits in one description, so a new model is a model file plus data.
+- HUD (added 2026-11-13): an overlay the user can show or hide, with the music that is playing and playback controls.
+- Artwork on the record label. It changes with each song to that song's album cover (added 2026-11-13).
 - Tonearm: drag to play, drag to seek between tracks, lift to stop. It tracks playback progress.
 - Buttons: start/stop, previous and next, as physical buttons on the plinth like a real record player. Keyboard: space, left and right arrows, and the Mac media keys.
 - Track title, album, artist and elapsed time.
@@ -41,6 +44,7 @@ A Mac app where you pick an album or playlist from Apple Music, it drops onto a 
 - Mac App Store release.
 
 ## Later
+- Switching between 3 to 4 turntable models. Amit provides the list later.
 - More themes (warm hi-fi, light minimal) with a theme switch.
 - Needle-drop and crackle sounds.
 - Dragging the record to scrub.
@@ -64,9 +68,13 @@ A Mac app where you pick an album or playlist from Apple Music, it drops onto a 
 15. **Friends' build:** the app opens on another Mac with no Gatekeeper warning.
 16. **Empty states:** an empty platter invites picking a record; an empty library points to search; a search with no results says so.
 17. **Error states:** no subscription, access denied and offline each show one plain message and a way to retry.
+18. **Views:** the user switches between the camera views (top, 45-degree side, tonearm close-up); the change is smooth and playback carries on.
+19. **Model-ready:** the deck's layout, controls, part names and camera views come from one description; no other code names the AT-LP140XP.
+20. **HUD:** one action shows or hides the HUD; it shows the current song and its play/pause, previous and next controls work.
+21. **Song artwork:** when a new song starts, the label shows that song's album cover within 1 second.
 
 ## Budget and success test
-Budget: 4 weeks (default; Amit has not stated one).
+Budget: 27 working days. The default was 4 weeks; on 2026-11-13 Amit made camera views, the HUD and song artwork mandatory for the first version, which adds 7 days.
 
 Success test: after two weeks of use, Amit still opens record-player instead of the Music app to play an album, and at least one friend has installed it.
 
