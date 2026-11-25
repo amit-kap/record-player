@@ -687,6 +687,22 @@ final class TurntableScene {
 
     // MARK: Parts
 
+    #if DEBUG
+    /// Debug only, for marketing stills: swaps the metal table for a matte stone slab `size` metres across,
+    /// printed with `texture`. `mirror` is how faintly the deck still shows in it, 0...1.
+    func useStoneFloor(texture: CGImage, size: Float = 4, mirror: Float = 0.08) async throws {
+        var stone = PhysicallyBasedMaterial()
+        let resource = try await TextureResource(image: texture, options: .init(semantic: .color))
+        stone.baseColor = .init(tint: NSColor(white: 1, alpha: 1), texture: .init(resource))
+        stone.roughness = .init(floatLiteral: 0.62)
+        stone.metallic = .init(floatLiteral: 0)
+        stone.blending = .transparent(opacity: .init(floatLiteral: 1 - mirror))
+        ground.model = ModelComponent(mesh: .generatePlane(width: size, depth: size), materials: [stone])
+        // Lit by the lamps alone, so the light pools under the key and falls off into darkness.
+        ground.components.remove(ImageBasedLightReceiverComponent.self)
+    }
+    #endif
+
     private func material(_ finish: TurntableTheme.Finish) -> PhysicallyBasedMaterial {
         var material = PhysicallyBasedMaterial()
         material.baseColor = .init(tint: NSColor(white: finish.white, alpha: 1))

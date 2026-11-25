@@ -297,6 +297,10 @@ enum TurntableSnapshot {
         let model = TurntableModel(playback: playback, record: playback == nil ? .placeholder : first)
         let scene = try await TurntableScene(spec: model.spec, theme: .dark, trackStarts: model.trackStarts)
         scene.show(view, in: CGSize(width: width, height: height), animated: false)
+        // Marketing stills: `--floor stone` puts the deck on a stone slab, `--zoom 2.5` pulls the camera back.
+        if value(after: "--floor", in: CommandLine.arguments) == "stone" {
+            try await scene.useStoneFloor(texture: stoneTexture(pixels: 4096))
+        }
 
         if let swing {
             // Carry the arm to the requested swing and let go.
@@ -332,6 +336,12 @@ enum TurntableSnapshot {
             try await Task.sleep(for: .milliseconds(16))
         }
 
+        // Set after the frames above, which keep fitting the camera to the view.
+        if let zoom = value(after: "--zoom", in: CommandLine.arguments).flatMap(Float.init) {
+            let placed = scene.sceneCamera
+            let position = placed.target + (placed.position - placed.target) * zoom
+            scene.camera.look(at: placed.target, from: position, upVector: placed.up, relativeTo: nil)
+        }
         let renderer = try RealityRenderer()
         renderer.entities.append(scene.root)
         renderer.activeCamera = scene.camera
@@ -392,5 +402,43 @@ enum TurntableSnapshot {
         CGImageDestinationAddImage(destination, composed, nil)
         CGImageDestinationFinalize(destination)
     }
+}
+#endif
+
+#if DEBUG
+/// A dark, matte stone surface: soft clouds over a fine grain, for marketing stills.
+@MainActor
+func stoneTexture(pixels: Int) -> CGImage {
+    let grey = CGColorSpace(name: CGColorSpace.genericGrayGamma2_2)!
+    let rect = CGRect(x: 0, y: 0, width: pixels, height: pixels)
+    let canvas = CGContext(
+        data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+        space: grey, bitmapInfo: CGImageAlphaInfo.none.rawValue
+    )!
+    canvas.setFillColor(gray: 0.5, alpha: 1)
+    canvas.fill(rect)
+    var random = SystemRandomNumberGenerator()
+    /// A layer of `cells` x `cells` random greys, stretched over the slab.
+    func layer(cells: Int, alpha: CGFloat, smooth: Bool) {
+        let bytes = (0..<cells * cells).map { _ in UInt8.random(in: 0...255, using: &random) }
+        let image = CGImage(
+            width: cells, height: cells, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: cells, space: grey,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+            provider: CGDataProvider(data: Data(bytes) as CFData)!, decode: nil, shouldInterpolate: smooth,
+            intent: .defaultIntent
+        )!
+        canvas.interpolationQuality = smooth ? .high : .none
+        canvas.setAlpha(alpha)
+        canvas.draw(image, in: rect)
+    }
+    layer(cells: 6, alpha: 0.5, smooth: true)
+    layer(cells: 24, alpha: 0.3, smooth: true)
+    layer(cells: 96, alpha: 0.2, smooth: true)
+    layer(cells: pixels / 2, alpha: 0.12, smooth: false)
+    // Down to a near-black charcoal.
+    canvas.setAlpha(0.9)
+    canvas.setFillColor(gray: 0, alpha: 1)
+    canvas.fill(rect)
+    return canvas.makeImage()!
 }
 #endif
