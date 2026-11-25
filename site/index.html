@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Turntable</title>
+  <meta name="description" content="Your Apple Music, on a record player.">
+  <meta name="color-scheme" content="dark">
+  <style>
+    :root {
+      --bg: #0b0b0c;
+      --text: #f2f0ed;
+      --muted: #8d8a86;
+      --accent: #f2f0ed;
+    }
+    * { box-sizing: border-box; margin: 0; }
+    html, body { background: var(--bg); color: var(--text); overflow: hidden; overscroll-behavior: none; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      height: 100svh;
+      overflow: hidden;
+      position: relative;
+    }
+
+    header {
+      text-align: center;
+      padding: clamp(64px, 12vh, 140px) 24px 0;
+      position: relative;
+      z-index: 1;
+    }
+    h1 {
+      font-size: clamp(56px, 10vw, 136px);
+      font-weight: 700;
+      letter-spacing: -0.045em;
+      line-height: 0.95;
+    }
+    p {
+      margin-top: 20px;
+      font-size: clamp(18px, 2vw, 22px);
+      color: var(--muted);
+      letter-spacing: -0.01em;
+    }
+    .download {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 40px;
+      padding: 16px 28px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--bg);
+      font-size: 17px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: transform .2s ease, box-shadow .2s ease;
+    }
+    .download:hover { transform: translateY(-1px); box-shadow: 0 8px 30px rgba(242, 240, 237, .18); }
+    .download:active { transform: translateY(0); }
+    .download:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    .download svg { width: 18px; height: 18px; }
+
+    /* The player sits on the bottom edge, top half revealed. Width shrinks on short screens so the text never collides. */
+    figure {
+      --w: min(980px, 90vw, calc((100svh - 400px) * 2.56));
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      width: var(--w);
+      height: calc(var(--w) * 0.389);
+      margin: 0;
+      transform: translateX(-50%);
+    }
+    /* Soft lamp glow behind the player, echoing the app's key light */
+    figure::before {
+      content: "";
+      position: absolute;
+      inset: -30% -20% 0;
+      background: radial-gradient(50% 60% at 40% 60%, rgba(255, 236, 210, .10), transparent 70%);
+      pointer-events: none;
+    }
+    figure img {
+      position: relative;
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 6px;
+      box-shadow: 0 -10px 80px rgba(0, 0, 0, .8), 0 0 0 1px rgba(255, 255, 255, .08);
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      header > * { animation: rise .8s cubic-bezier(.2, .7, .2, 1) both; }
+      header p { animation-delay: .08s; }
+      header .download { animation-delay: .16s; }
+      figure img { animation: rise 1.1s cubic-bezier(.2, .7, .2, 1) .25s both; }
+      @keyframes rise { from { opacity: 0; transform: translateY(16px); } }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Turntable</h1>
+    <p>Your Apple Music, on a record player.</p>
+    <!-- TODO: point to the signed .dmg once Apple Developer signing is ready -->
+    <a class="download" href="#" download>
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10M5.5 8.5 10 13l4.5-4.5M4 17h12"/></svg>
+      Download for macOS
+    </a>
+  </header>
+
+  <figure>
+    <img
+      src="assets/turntable-1100.jpg"
+      srcset="assets/turntable-1100.jpg 1100w, assets/turntable.jpg 1818w"
+      sizes="min(980px, 90vw)"
+      width="1818" height="1416"
+      alt="The Turntable app: a 3D record player seen from above, playing a record.">
+  </figure>
+</body>
+</html>
